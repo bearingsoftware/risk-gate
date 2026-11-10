@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bearingsoftware/risk-gate/schema/decision.v1.json",
+  "title": "risk-gate decision record v1",
+  "type": "object",
+  "required": ["schema", "repo", "pr", "base_ref", "base_sha", "head_ref", "head_sha", "run", "mode", "scorer", "tiers_file_sha256", "lane", "author", "path_tier", "floors", "score", "score_items", "det_tier", "inputs", "unavailable", "attestation", "check"],
+  "properties": {
+    "schema": { "const": "risk-gate.decision/v1" },
+    "repo": { "type": "string", "pattern": "^[^/]+/[^/]+$" },
+    "pr": { "type": "integer", "minimum": 1 },
+    "base_ref": { "type": "string" },
+    "base_sha": { "$ref": "#/$defs/sha" },
+    "head_ref": { "type": "string" },
+    "head_sha": { "$ref": "#/$defs/sha" },
+    "run": {
+      "type": "object",
+      "required": ["id", "attempt", "event", "at"],
+      "properties": {
+        "id": { "type": "integer" },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "event": { "enum": ["pull_request", "pull_request_review", "workflow_dispatch"] },
+        "action": { "type": "string" },
+        "at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "mode": { "enum": ["shadow", "enforce"] },
+    "scorer": {
+      "type": "object",
+      "required": ["version", "weights_version", "weights_sha256"],
+      "properties": {
+        "version": { "type": "string" },
+        "weights_version": { "type": "string" },
+        "weights_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "tiers_file_sha256": { "$ref": "#/$defs/sha256" },
+    "lane": { "enum": ["human", "bot", "release"] },
+    "author": {
+      "type": "object",
+      "required": ["login", "bot"],
+      "properties": { "login": { "type": "string" }, "bot": { "type": "boolean" } }
+    },
+    "path_tier": { "$ref": "#/$defs/tier" },
+    "floors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["rule", "tier"],
+        "properties": {
+          "rule": { "enum": ["tier2_path", "control_file", "sast_new_high", "dep_manifest_human", "api_break", "revert_or_hotfix", "first_time_contributor"] },
+          "tier": { "$ref": "#/$defs/tier" },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "score": { "type": "integer", "minimum": 0 },
+    "score_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["signal", "points"],
+        "properties": {
+          "signal": { "enum": ["revert_or_hotfix", "bug_fix", "size", "diffusion_files", "diffusion_dirs", "no_tests", "coverage_drop", "author_tenure", "hot_files"] },
+          "points": { "type": "integer" },
+          "value": {}
+        }
+      }
+    },
+    "det_tier": { "$ref": "#/$defs/tier" },
+    "inputs": {
+      "type": "object",
+      "required": ["title", "labels", "lines_added", "lines_deleted", "files_changed", "top_level_dirs", "test_lines", "non_test_lines", "coverage_delta", "sast_new_high", "api_break", "dep_manifest_changed", "author_commits_180d", "first_time_contributor", "hot_files", "bot_update_type", "files", "files_truncated"],
+      "properties": {
+        "title": { "type": "string" },
+        "labels": { "type": "array", "items": { "type": "string" } },
+        "lines_added": { "type": "integer" },
+        "lines_deleted": { "type": "integer" },
+        "files_changed": { "type": "integer" },
+        "top_level_dirs": { "type": "integer" },
+        "test_lines": { "type": "integer" },
+        "non_test_lines": { "type": "integer" },
+        "coverage_delta": { "type": ["number", "null"] },
+        "sast_new_high": { "type": ["integer", "null"] },
+        "api_break": { "type": ["boolean", "null"] },
+        "dep_manifest_changed": { "type": "boolean" },
+        "author_commits_180d": { "type": ["integer", "null"] },
+        "first_time_contributor": { "type": ["boolean", "null"] },
+        "hot_files": { "type": ["integer", "null"] },
+        "bot_update_type": { "enum": ["patch", "minor", "major", "digest", "unknown", null] },
+        "files": {
+          "type": "array",
+          "maxItems": 300,
+          "items": {
+            "type": "object",
+            "required": ["path", "status", "additions", "deletions", "tier"],
+            "properties": {
+              "path": { "type": "string" },
+              "previous_path": { "type": "string" },
+              "status": { "enum": ["added", "modified", "removed", "renamed", "copied", "changed", "unchanged"] },
+              "additions": { "type": "integer" },
+              "deletions": { "type": "integer" },
+              "tier": { "$ref": "#/$defs/tier" }
+            }
+          }
+        },
+        "files_truncated": { "type": "boolean" }
+      }
+    },
+    "unavailable": { "type": "array", "items": { "type": "string" } },
+    "attestation": {
+      "type": "object",
+      "required": ["required", "attested", "label", "by", "at"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "attested": { "type": "boolean" },
+        "label": { "type": "string" },
+        "by": { "type": ["string", "null"] },
+        "at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "check": {
+      "type": "object",
+      "required": ["conclusion", "would_block"],
+      "properties": {
+        "conclusion": { "enum": ["success", "failure", "neutral"] },
+        "would_block": { "type": "boolean" },
+        "reason": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "tier": { "enum": [0, 1, 2] },
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

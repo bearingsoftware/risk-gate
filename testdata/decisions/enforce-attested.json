@@ -1,0 +1,108 @@
+{
+  "schema": "risk-gate.decision/v1",
+  "repo": "bearingsoftware/component-test-framework",
+  "pr": 80,
+  "base_ref": "main",
+  "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "head_ref": "feat/ctf-80-runner",
+  "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "run": {
+    "id": 21000000002,
+    "attempt": 1,
+    "event": "pull_request",
+    "action": "labeled",
+    "at": "2027-01-05T09:30:00Z"
+  },
+  "mode": "enforce",
+  "scorer": {
+    "version": "0.1.0",
+    "weights_version": "1",
+    "weights_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "tiers_file_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "lane": "human",
+  "author": {
+    "login": "chattersley",
+    "bot": false
+  },
+  "inputs": {
+    "title": "feat: parallel runner",
+    "labels": [],
+    "lines_added": 800,
+    "lines_deleted": 103,
+    "files_changed": 10,
+    "top_level_dirs": 2,
+    "test_lines": 300,
+    "non_test_lines": 603,
+    "coverage_delta": null,
+    "sast_new_high": null,
+    "api_break": null,
+    "dep_manifest_changed": true,
+    "author_commits_180d": 57,
+    "first_time_contributor": false,
+    "hot_files": 0,
+    "bot_update_type": null,
+    "files": [
+      {
+        "path": ".github/workflows/release.yml",
+        "status": "modified",
+        "additions": 3,
+        "deletions": 1,
+        "tier": 2
+      },
+      {
+        "path": "src/runner.ts",
+        "status": "renamed",
+        "previous_path": "src/run.ts",
+        "additions": 200,
+        "deletions": 40,
+        "tier": 1
+      }
+    ],
+    "files_truncated": false
+  },
+  "unavailable": [
+    "coverage_delta",
+    "api_break",
+    "sast_new_high"
+  ],
+  "attestation": {
+    "required": true,
+    "attested": true,
+    "label": "tier2-self-reviewed",
+    "by": "chattersley",
+    "at": "2027-01-05T09:29:41Z"
+  },
+  "check": {
+    "conclusion": "success",
+    "would_block": false,
+    "reason": "tier 2 attested after latest push"
+  },
+  "path_tier": 2,
+  "floors": [
+    {
+      "rule": "control_file",
+      "tier": 2,
+      "detail": ".github/workflows/release.yml"
+    },
+    {
+      "rule": "dep_manifest_human",
+      "tier": 2,
+      "detail": "package.json"
+    }
+  ],
+  "score": 4,
+  "score_items": [
+    {
+      "signal": "size",
+      "points": 3,
+      "value": 903
+    },
+    {
+      "signal": "diffusion_files",
+      "points": 1,
+      "value": 10
+    }
+  ],
+  "det_tier": 2
+}

@@ -1,0 +1,142 @@
+{
+  "frozen_at": "2026-11-10",
+  "window": {
+    "merged_from": "2026-08-12",
+    "merged_to": "2026-11-10"
+  },
+  "source": "GitHub GraphQL search, merged PRs; release lane = head develop or release-please--*",
+  "repos": {
+    "secure-repo": {
+      "integration_branch": "develop",
+      "merged_total": 553,
+      "release_lane": 97,
+      "other_base": 120,
+      "human": {
+        "count": 230,
+        "merge_hours_p50": 1.0,
+        "merge_hours_p75": 4.9,
+        "merge_hours_p90": 14.1,
+        "lines_p50": 468,
+        "lines_p75": 1095,
+        "files_p50": 11,
+        "size_bands": {
+          "0-50": 36,
+          "51-200": 36,
+          "201-500": 52,
+          ">500": 106
+        },
+        "fix_titled": 87,
+        "revert_titled": 0,
+        "with_approval": 0,
+        "with_any_review": 0
+      },
+      "bot": {
+        "count": 106,
+        "merge_hours_p50": 1.1,
+        "merge_hours_p75": 2.1,
+        "merge_hours_p90": 13.7,
+        "lines_p50": 12,
+        "lines_p75": 70,
+        "files_p50": 1,
+        "size_bands": {
+          "0-50": 74,
+          "51-200": 22,
+          "201-500": 5,
+          ">500": 5
+        },
+        "fix_titled": 18,
+        "revert_titled": 0,
+        "with_approval": 0,
+        "with_any_review": 0
+      }
+    },
+    "joule-genie": {
+      "integration_branch": "develop",
+      "merged_total": 854,
+      "release_lane": 94,
+      "other_base": 30,
+      "human": {
+        "count": 653,
+        "merge_hours_p50": 1.0,
+        "merge_hours_p75": 4.1,
+        "merge_hours_p90": 12.5,
+        "lines_p50": 208,
+        "lines_p75": 586,
+        "files_p50": 6,
+        "size_bands": {
+          "0-50": 167,
+          "51-200": 153,
+          "201-500": 136,
+          ">500": 197
+        },
+        "fix_titled": 306,
+        "revert_titled": 0,
+        "with_approval": 0,
+        "with_any_review": 0
+      },
+      "bot": {
+        "count": 77,
+        "merge_hours_p50": 15.9,
+        "merge_hours_p75": 143.0,
+        "merge_hours_p90": 241.2,
+        "lines_p50": 12,
+        "lines_p75": 42,
+        "files_p50": 2,
+        "size_bands": {
+          "0-50": 61,
+          "51-200": 4,
+          "201-500": 4,
+          ">500": 8
+        },
+        "fix_titled": 6,
+        "revert_titled": 0,
+        "with_approval": 1,
+        "with_any_review": 1
+      }
+    },
+    "component-test-framework": {
+      "integration_branch": "main",
+      "merged_total": 57,
+      "release_lane": 15,
+      "other_base": 0,
+      "human": {
+        "count": 21,
+        "merge_hours_p50": 0.4,
+        "merge_hours_p75": 0.7,
+        "merge_hours_p90": 1.5,
+        "lines_p50": 903,
+        "lines_p75": 1308,
+        "files_p50": 10,
+        "size_bands": {
+          "0-50": 2,
+          "51-200": 4,
+          "201-500": 1,
+          ">500": 14
+        },
+        "fix_titled": 7,
+        "revert_titled": 0,
+        "with_approval": 0,
+        "with_any_review": 0
+      },
+      "bot": {
+        "count": 21,
+        "merge_hours_p50": 1.0,
+        "merge_hours_p75": 3.9,
+        "merge_hours_p90": 4.0,
+        "lines_p50": 22,
+        "lines_p75": 122,
+        "files_p50": 1,
+        "size_bands": {
+          "0-50": 14,
+          "51-200": 5,
+          "201-500": 1,
+          ">500": 1
+        },
+        "fix_titled": 0,
+        "revert_titled": 0,
+        "with_approval": 0,
+        "with_any_review": 0
+      }
+    }
+  }
+}

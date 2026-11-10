@@ -1,0 +1,103 @@
+{
+  "schema": "risk-gate.decision/v1",
+  "repo": "bearingsoftware/secure-repo",
+  "pr": 1304,
+  "base_ref": "main",
+  "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "head_ref": "develop",
+  "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "run": {
+    "id": 19000000001,
+    "attempt": 1,
+    "event": "pull_request",
+    "action": "synchronize",
+    "at": "2026-11-24T10:15:00Z"
+  },
+  "mode": "shadow",
+  "scorer": {
+    "version": "0.1.0",
+    "weights_version": "1",
+    "weights_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "tiers_file_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "lane": "release",
+  "author": {
+    "login": "chattersley",
+    "bot": false
+  },
+  "inputs": {
+    "title": "Release: develop \u2192 main",
+    "labels": [],
+    "lines_added": 1800,
+    "lines_deleted": 410,
+    "files_changed": 41,
+    "top_level_dirs": 4,
+    "test_lines": 700,
+    "non_test_lines": 1510,
+    "coverage_delta": null,
+    "sast_new_high": null,
+    "api_break": null,
+    "dep_manifest_changed": false,
+    "author_commits_180d": 412,
+    "first_time_contributor": false,
+    "hot_files": 9,
+    "bot_update_type": null,
+    "files": [
+      {
+        "path": ".github/workflows/ci.yml",
+        "status": "modified",
+        "additions": 4,
+        "deletions": 2,
+        "tier": 2
+      }
+    ],
+    "files_truncated": false
+  },
+  "unavailable": [
+    "coverage_delta",
+    "api_break"
+  ],
+  "attestation": {
+    "required": false,
+    "attested": false,
+    "label": "tier2-self-reviewed",
+    "by": null,
+    "at": null
+  },
+  "check": {
+    "conclusion": "success",
+    "would_block": false
+  },
+  "path_tier": 2,
+  "floors": [
+    {
+      "rule": "control_file",
+      "tier": 2,
+      "detail": ".github/workflows/ci.yml"
+    }
+  ],
+  "score": 6,
+  "score_items": [
+    {
+      "signal": "size",
+      "points": 3,
+      "value": 2210
+    },
+    {
+      "signal": "diffusion_files",
+      "points": 1,
+      "value": 41
+    },
+    {
+      "signal": "diffusion_dirs",
+      "points": 1,
+      "value": 4
+    },
+    {
+      "signal": "hot_files",
+      "points": 1,
+      "value": 9
+    }
+  ],
+  "det_tier": 2
+}
