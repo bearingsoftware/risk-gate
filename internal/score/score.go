@@ -27,6 +27,8 @@ type Input struct {
 	AuthorBot bool
 	HeadRef   string
 	Files     []File
+	// FileListIncomplete is set when GitHub reported more changed files than it returned.
+	FileListIncomplete bool
 
 	SastNewHigh          *int
 	CoverageDelta        *float64
@@ -121,6 +123,9 @@ func Evaluate(in Input) Result {
 		if f.PreviousPath != "" {
 			tier = max(tier, cfg.Tier(f.PreviousPath))
 		}
+		if in.AuthorBot && cfg.IsBotAuthor(in.Author) && isManifest(f.Path) && tier != 2 {
+			tier = 0
+		}
 		ctrl := isControl(f.Path) || (f.PreviousPath != "" && isControl(f.PreviousPath))
 		if ctrl {
 			tier = 2
@@ -206,6 +211,10 @@ func Evaluate(in Input) Result {
 	}
 	if !in.AuthorBot && in.FirstTimeContributor != nil && *in.FirstTimeContributor {
 		floor("first_time_contributor", 2, "")
+	}
+
+	if in.FileListIncomplete {
+		floor("file_list_incomplete", 2, "GitHub returned fewer files than changed_files")
 	}
 
 	lines := inputs.LinesAdded + inputs.LinesDeleted

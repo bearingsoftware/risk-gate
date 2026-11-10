@@ -44,6 +44,20 @@ attestation:
   permitted: ["chattersley"]
 `
 
+const goldenTiersRecordedOnly = `version: 1
+owner: "@chattersley"
+default_tier: 1
+tiers:
+  2:
+    paths: ["backend/internal/auth/**", ".github/workflows/**"]
+  0:
+    paths: ["**/*.md", "docs/**"]
+    bot_authors: ["renovate[bot]"]
+    bot_conditions: {update_type: patch}
+release:
+  heads: ["develop", "release-please--*"]
+`
+
 const goldenTiersNoWorkflows = `version: 1
 owner: "@chattersley"
 default_tier: 1
@@ -157,11 +171,11 @@ func scenarios() []scenario {
 		return run.Options{Repo: repo, Mode: mode, RunID: id, RunAttempt: 1, Event: event, EventAction: action, Now: at(now)}
 	}
 	return []scenario{
-		{"tier2-auth-path.json", goldenTiers, auth, mk(19000000001, "pull_request", "synchronize", "shadow", "bearingsoftware/secure-repo", "2026-11-24T10:15:00Z"), true, []string{"check.would_block"}},
-		{"tier1-small-human.json", goldenTiers, small, mk(19000000001, "pull_request", "synchronize", "shadow", "bearingsoftware/secure-repo", "2026-11-24T10:15:00Z"), true, nil},
-		{"tier0-renovate-patch.json", goldenTiers, renovate, mk(19000000001, "pull_request", "synchronize", "shadow", "bearingsoftware/secure-repo", "2026-11-24T10:15:00Z"), false, []string{"unavailable:sast_new_high"}},
-		{"release-lane.json", goldenTiers, rel, mk(19000000001, "pull_request", "synchronize", "shadow", "bearingsoftware/secure-repo", "2026-11-24T10:15:00Z"), false, []string{"check.would_block", "unavailable:sast_new_high"}},
-		{"enforce-attested.json", goldenTiersNoWorkflows, att, mk(21000000002, "pull_request", "labeled", "enforce", "bearingsoftware/component-test-framework", "2027-01-05T09:30:00Z"), false, []string{"inputs.labels"}},
+		{"tier2-auth-path.json", goldenTiersRecordedOnly, auth, mk(19000000001, "pull_request", "synchronize", "shadow", "bearingsoftware/secure-repo", "2026-11-24T10:15:00Z"), true, nil},
+		{"tier1-small-human.json", goldenTiersRecordedOnly, small, mk(19000000001, "pull_request", "synchronize", "shadow", "bearingsoftware/secure-repo", "2026-11-24T10:15:00Z"), true, nil},
+		{"tier0-renovate-patch.json", goldenTiersRecordedOnly, renovate, mk(19000000001, "pull_request", "synchronize", "shadow", "bearingsoftware/secure-repo", "2026-11-24T10:15:00Z"), false, nil},
+		{"release-lane.json", goldenTiersRecordedOnly, rel, mk(19000000001, "pull_request", "synchronize", "shadow", "bearingsoftware/secure-repo", "2026-11-24T10:15:00Z"), false, nil},
+		{"enforce-attested.json", goldenTiersNoWorkflows, att, mk(21000000002, "pull_request", "labeled", "enforce", "bearingsoftware/component-test-framework", "2027-01-05T09:30:00Z"), false, nil},
 	}
 }
 

@@ -76,9 +76,10 @@ func TestAttestation(t *testing.T) {
 		{"push without label", "enforce", "synchronize", nil, nil, []string{"auth/a.go"}, false, true, false, "failure", true},
 		{"push removes label on tier 1 too", "enforce", "synchronize", []string{"attested"}, &label, []string{"src/a.go"}, true, false, false, "success", false},
 		{"tier1 needs nothing", "enforce", "opened", nil, nil, []string{"src/a.go"}, false, false, false, "success", false},
-		{"shadow tier2 never fails", "shadow", "opened", nil, nil, []string{"auth/a.go"}, false, false, false, "success", true},
+		{"shadow tier2 never fails", "shadow", "opened", nil, nil, []string{"auth/a.go"}, false, true, false, "success", true},
 		{"shadow tier1", "shadow", "opened", nil, nil, []string{"src/a.go"}, false, false, false, "success", false},
-		{"shadow leaves labels alone", "shadow", "synchronize", []string{"attested"}, &label, []string{"auth/a.go"}, false, false, false, "success", true},
+		{"shadow leaves labels alone", "shadow", "synchronize", []string{"attested"}, &label, []string{"auth/a.go"}, false, true, false, "success", true},
+		{"shadow attested", "shadow", "labeled", []string{"attested"}, &label, []string{"auth/a.go"}, false, true, true, "success", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -263,5 +264,40 @@ func TestOptionalSignals(t *testing.T) {
 	rec, _ = run.Run(context.Background(), o, fake(nil, "src/a.go"))
 	if rec.Inputs.SastNewHigh != nil {
 		t.Fatal("sast computed from a single file")
+	}
+}
+
+func TestRecordedOnlyRepoNeverRequiresAttestation(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"shadow"} {
+		o := opts(t, mode, "opened")
+		if err := os.WriteFile(o.TiersPath, []byte("version: 1\ndefault_tier: 1\ntiers:\n  2:\n    paths: [\"auth/**\"]\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		rec, err := run.Run(context.Background(), o, fake(nil, "auth/a.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.DetTier != 2 || rec.Attestation.Required || rec.Check.WouldBlock || rec.Attestation.Label != "tier2-self-reviewed" {
+			t.Fatalf("rec = %+v %+v", rec.Attestation, rec.Check)
+		}
+	}
+}
+
+func TestFileListIncompleteFloor(t *testing.T) {
+	t.Parallel()
+	f := fake(nil, "src/a.go")
+	f.PR.ChangedFiles = 3001
+	rec, err := run.Run(context.Background(), opts(t, "shadow", "opened"), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.DetTier != 2 || len(rec.Floors) == 0 || rec.Floors[len(rec.Floors)-1].Rule != "file_list_incomplete" {
+		t.Fatalf("floors = %+v det %d", rec.Floors, rec.DetTier)
+	}
+	f.PR.ChangedFiles = 1
+	rec, _ = run.Run(context.Background(), opts(t, "shadow", "opened"), f)
+	if rec.DetTier != 1 {
+		t.Fatalf("complete list raised tier: %d", rec.DetTier)
 	}
 }

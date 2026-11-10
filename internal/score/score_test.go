@@ -308,7 +308,7 @@ func TestBotMapping(t *testing.T) {
 		tier  int
 		utype string
 	}{
-		{"patch manifests+docs", botInput(t, renovateBody("1.2.3", "1.2.4"), docs, manifest, lock), 1, "patch"},
+		{"patch manifests+docs", botInput(t, renovateBody("1.2.3", "1.2.4"), docs, manifest, lock), 0, "patch"},
 		{"minor", botInput(t, renovateBody("1.2.3", "1.3.0"), docs), 1, "minor"},
 		{"unknown", botInput(t, "nothing here", docs), 1, "unknown"},
 		{"patch all tier 0", botInput(t, renovateBody("1.2.3", "1.2.4"), docs, docs), 0, "patch"},
@@ -430,5 +430,57 @@ func TestInputsAggregates(t *testing.T) {
 	}
 	if i.Files[2].PreviousPath != "web/y.ts" || i.BotUpdateType != nil {
 		t.Fatalf("files/bot = %+v", i)
+	}
+}
+
+func TestManifestTierByAuthor(t *testing.T) {
+	t.Parallel()
+	bot := func(files ...File) Input { return botInput(t, renovateBody("1.2.3", "1.2.4"), files...) }
+	human := func(files ...File) Input {
+		in := base(t)
+		in.Files = files
+		return in
+	}
+	otherBot := bot(lines("go.mod", 1))
+	otherBot.Author = "dependabot[bot]"
+	tests := []struct {
+		name     string
+		in       Input
+		path     int
+		det      int
+		fileTier []int
+		floor    bool
+	}{
+		{"bot manifest", bot(lines("go.mod", 1), lines("go.sum", 1)), 0, 0, []int{0, 0}, false},
+		{"bot nested lockfiles", bot(lines("web/pnpm-lock.yaml", 1), lines("a/b/yarn.lock", 1), lines("web/package.json", 1)), 0, 0, []int{0, 0, 0}, false},
+		{"bot manifest and go file", bot(lines("go.mod", 1), lines("src/a.go", 1)), 1, 1, []int{0, 1}, false},
+		{"human manifest", human(lines("go.mod", 1)), 1, 2, []int{1}, true},
+		{"bot not in bot_authors", otherBot, 1, 1, []int{1}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := Evaluate(tc.in)
+			if r.PathTier != tc.path || r.DetTier != tc.det {
+				t.Fatalf("path %d det %d, want %d / %d", r.PathTier, r.DetTier, tc.path, tc.det)
+			}
+			for i, f := range r.Inputs.Files {
+				if f.Tier != tc.fileTier[i] {
+					t.Errorf("file %s tier %d, want %d", f.Path, f.Tier, tc.fileTier[i])
+				}
+			}
+			if got := slices.Contains(floorRules(r), "dep_manifest_human"); got != tc.floor {
+				t.Errorf("dep_manifest_human = %v", got)
+			}
+		})
+	}
+}
+
+func TestFileListIncompleteFloor(t *testing.T) {
+	t.Parallel()
+	in := base(t)
+	in.FileListIncomplete = true
+	if r := Evaluate(in); r.DetTier != 2 || !slices.Contains(floorRules(r), "file_list_incomplete") {
+		t.Fatalf("floors = %v det %d", floorRules(r), r.DetTier)
 	}
 }

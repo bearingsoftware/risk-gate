@@ -53,7 +53,10 @@ type Options struct {
 	Log          *log.Logger
 }
 
-const checkName = "risk-gate"
+const (
+	checkName               = "risk-gate"
+	defaultAttestationLabel = "tier2-self-reviewed"
+)
 
 func Run(ctx context.Context, o Options, g GitHub) (decision.Record, error) {
 	tiersData, err := os.ReadFile(o.TiersPath)
@@ -94,7 +97,7 @@ func Run(ctx context.Context, o Options, g GitHub) (decision.Record, error) {
 
 	in := score.Input{
 		Title: pr.Title, Body: pr.Body, Labels: pr.Labels, Author: pr.Author, AuthorBot: pr.AuthorBot,
-		HeadRef: pr.HeadRef, Tiers: cfg, Weights: w, APIBreak: o.APIBreak,
+		HeadRef: pr.HeadRef, FileListIncomplete: pr.ChangedFiles > len(files), Tiers: cfg, Weights: w, APIBreak: o.APIBreak,
 	}
 	for _, f := range files {
 		in.Files = append(in.Files, score.File(f))
@@ -245,16 +248,17 @@ func hotFiles(ctx context.Context, g GitHub, o Options, pr gh.PullRequest, now t
 func attest(ctx context.Context, g GitHub, o Options, cfg *tiers.Config, pr gh.PullRequest, rec *decision.Record) error {
 	rec.Attestation = decision.Attestation{Label: attestationLabel(cfg)}
 	rec.Check = decision.Check{Conclusion: "success"}
-	if o.Mode == "shadow" {
-		rec.Check.WouldBlock = rec.DetTier == 2
+	a := cfg.Attestation
+	if a == nil {
 		return nil
 	}
-	a := cfg.Attestation
 	rec.Attestation.Required = rec.DetTier == 2
 	present := slices.Contains(pr.Labels, a.Label)
 	if present && o.EventAction == "synchronize" {
-		if err := g.RemoveLabel(ctx, o.PR, a.Label); err != nil {
-			return fmt.Errorf("removing stale attestation label: %w", err)
+		if o.Mode == "enforce" {
+			if err := g.RemoveLabel(ctx, o.PR, a.Label); err != nil {
+				return fmt.Errorf("removing stale attestation label: %w", err)
+			}
 		}
 		present = false
 	}
@@ -269,21 +273,23 @@ func attest(ctx context.Context, g GitHub, o Options, cfg *tiers.Config, pr gh.P
 			rec.Attestation.Attested = slices.Contains(a.Permitted, ev.Actor)
 		}
 	}
-	switch {
-	case !rec.Attestation.Required:
-	case rec.Attestation.Attested:
-		rec.Check.Reason = "tier 2 attested after latest push"
-	default:
-		rec.Check.WouldBlock = true
+	if rec.Attestation.Required {
+		rec.Check.WouldBlock = !rec.Attestation.Attested
+		if rec.Attestation.Attested {
+			rec.Check.Reason = "tier 2 attested after latest push"
+		} else {
+			rec.Check.Reason = fmt.Sprintf("tier 2 needs label %q applied by a permitted user after the latest push", a.Label)
+		}
+	}
+	if o.Mode == "enforce" && rec.Check.WouldBlock {
 		rec.Check.Conclusion = "failure"
-		rec.Check.Reason = fmt.Sprintf("tier 2 needs label %q applied by a permitted user after the latest push", a.Label)
 	}
 	return nil
 }
 
 func attestationLabel(cfg *tiers.Config) string {
 	if cfg.Attestation == nil {
-		return ""
+		return defaultAttestationLabel
 	}
 	return cfg.Attestation.Label
 }
