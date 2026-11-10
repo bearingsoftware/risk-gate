@@ -242,8 +242,129 @@ func TestCreateCheckRunBody(t *testing.T) {
 func TestErrorsDoNotLeakToken(t *testing.T) {
 	t.Parallel()
 	c, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusInternalServerError) })
+	c.Sleep = func(context.Context, time.Duration) error { return nil }
 	_, err := c.PullRequest(context.Background(), 1)
 	if err == nil || strings.Contains(err.Error(), "tok") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func retryClient(t *testing.T, h http.HandlerFunc) (*Client, *[]time.Duration, *int) {
+	t.Helper()
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		h(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	var waits []time.Duration
+	c := New("o/r", "tok")
+	c.BaseURL = srv.URL
+	c.Sleep = func(_ context.Context, d time.Duration) error { waits = append(waits, d); return nil }
+	return c, &waits, &calls
+}
+
+func TestRetries(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		respond   func(w http.ResponseWriter, call int)
+		wantErr   bool
+		wantCalls int
+		wantWaits []time.Duration
+	}{
+		{"503 then ok", func(w http.ResponseWriter, call int) {
+			if call == 1 {
+				w.WriteHeader(503)
+				return
+			}
+			io.WriteString(w, "{}")
+		}, false, 2, []time.Duration{time.Second}},
+		{"500 forever stops at three", func(w http.ResponseWriter, call int) { w.WriteHeader(500) }, true, 3, []time.Duration{time.Second, 2 * time.Second}},
+		{"429 honours Retry-After", func(w http.ResponseWriter, call int) {
+			if call == 1 {
+				w.Header().Set("Retry-After", "7")
+				w.WriteHeader(429)
+				return
+			}
+			io.WriteString(w, "{}")
+		}, false, 2, []time.Duration{7 * time.Second}},
+		{"secondary rate limit 403", func(w http.ResponseWriter, call int) {
+			if call == 1 {
+				w.Header().Set("Retry-After", "3")
+				w.WriteHeader(403)
+				return
+			}
+			io.WriteString(w, "{}")
+		}, false, 2, []time.Duration{3 * time.Second}},
+		{"retry-after is capped", func(w http.ResponseWriter, call int) {
+			if call == 1 {
+				w.Header().Set("Retry-After", "100000")
+				w.WriteHeader(429)
+				return
+			}
+			io.WriteString(w, "{}")
+		}, false, 2, []time.Duration{maxRetryWait}},
+		{"plain 403 is final", func(w http.ResponseWriter, call int) { w.WriteHeader(403) }, true, 1, nil},
+		{"404 is final", func(w http.ResponseWriter, call int) { w.WriteHeader(404) }, true, 1, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			n := 0
+			c, waits, calls := retryClient(t, func(w http.ResponseWriter, r *http.Request) { n++; tc.respond(w, n) })
+			_, err := c.PullRequest(context.Background(), 1)
+			if (err != nil) != tc.wantErr || *calls != tc.wantCalls {
+				t.Fatalf("err=%v calls=%d", err, *calls)
+			}
+			if fmt.Sprint(*waits) != fmt.Sprint(tc.wantWaits) {
+				t.Fatalf("waits = %v, want %v", *waits, tc.wantWaits)
+			}
+		})
+	}
+}
+
+func TestRetriesNetworkErrorsAndResendsBody(t *testing.T) {
+	t.Parallel()
+	var bodies []string
+	n := 0
+	c, _, _ := retryClient(t, func(w http.ResponseWriter, r *http.Request) {
+		n++
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		if n == 1 {
+			hj, _ := w.(http.Hijacker)
+			conn, _, _ := hj.Hijack()
+			conn.Close()
+			return
+		}
+		w.WriteHeader(201)
+		io.WriteString(w, "{}")
+	})
+	if err := c.CreateCheckRun(context.Background(), CheckRun{Name: "risk-gate", HeadSHA: "abc", Conclusion: "success"}); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 || bodies[1] == "" || bodies[0] != bodies[1] {
+		t.Fatalf("attempts %d bodies %q", n, bodies)
+	}
+}
+
+func TestHeadCommitDateAndForcePush(t *testing.T) {
+	t.Parallel()
+	c, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/repos/o/r/commits/") {
+			io.WriteString(w, `{"commit":{"committer":{"date":"2026-11-24T08:00:00Z"}}}`)
+			return
+		}
+		io.WriteString(w, `[{"event":"head_ref_force_pushed","created_at":"2026-11-24T07:00:00Z"},
+		 {"event":"head_ref_force_pushed","created_at":"2026-11-24T09:00:00Z"},{"event":"labeled","created_at":"2026-11-24T10:00:00Z"}]`)
+	})
+	d, err := c.HeadCommitDate(context.Background(), "abc")
+	if err != nil || d.Hour() != 8 {
+		t.Fatalf("d=%v err=%v", d, err)
+	}
+	f, ok, err := c.LatestForcePush(context.Background(), 5)
+	if err != nil || !ok || f.Hour() != 9 {
+		t.Fatalf("f=%v ok=%v err=%v", f, ok, err)
 	}
 }

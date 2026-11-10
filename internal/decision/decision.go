@@ -4,6 +4,7 @@ package decision
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -135,6 +136,7 @@ func (r Record) Marshal() ([]byte, error) {
 }
 
 // CheckText is the check run output.text: the marker, then the record in a json fence.
+// Backticks only occur inside JSON strings, so escaping them keeps a fence from appearing in the record.
 func CheckText(record []byte) string {
-	return Marker + "\n```json\n" + string(record) + "\n```\n"
+	return Marker + "\n```json\n" + strings.ReplaceAll(string(record), "`", `\u0060`) + "\n```\n"
 }

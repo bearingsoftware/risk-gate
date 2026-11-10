@@ -484,3 +484,26 @@ func TestFileListIncompleteFloor(t *testing.T) {
 		t.Fatalf("floors = %v det %d", floorRules(r), r.DetTier)
 	}
 }
+
+func TestTier2BeatsBotManifestAndTier0(t *testing.T) {
+	t.Parallel()
+	in := botInput(t, renovateBody("1.2.3", "1.2.4"), lines("go.mod", 1), lines("infra/a.tf", 1))
+	r := Evaluate(in)
+	if r.PathTier != 2 || r.DetTier != 2 || r.Inputs.Files[0].Tier != 0 || r.Inputs.Files[1].Tier != 2 {
+		t.Fatalf("path %d det %d files %+v", r.PathTier, r.DetTier, r.Inputs.Files)
+	}
+
+	doc := strings.Replace(tiersYAML, `paths: ["**/*.md", "docs/**"]`, `paths: ["**/*.md", "docs/**", "infra/**"]`, 1)
+	for _, bot := range []bool{false, true} {
+		in := base(t)
+		in.Tiers = mustTiers(t, doc)
+		in.Files = []File{lines("infra/readme.md", 1)}
+		if bot {
+			in = botInput(t, renovateBody("1.2.3", "1.2.4"), lines("infra/readme.md", 1))
+			in.Tiers = mustTiers(t, doc)
+		}
+		if r := Evaluate(in); r.Inputs.Files[0].Tier != 2 || r.DetTier != 2 {
+			t.Fatalf("bot=%v: tier 0 glob beat tier 2: file %d det %d", bot, r.Inputs.Files[0].Tier, r.DetTier)
+		}
+	}
+}

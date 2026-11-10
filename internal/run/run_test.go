@@ -301,3 +301,99 @@ func TestFileListIncompleteFloor(t *testing.T) {
 		t.Fatalf("complete list raised tier: %d", rec.DetTier)
 	}
 }
+
+func TestStaleAttestationLabel(t *testing.T) {
+	t.Parallel()
+	labelAt := time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC)
+	before := func(h int) time.Time { return time.Date(2026, 11, 24, h, 0, 0, 0, time.UTC) }
+	ptrT := func(t time.Time) *time.Time { return &t }
+	tests := []struct {
+		name   string
+		commit time.Time
+		force  *time.Time
+		fresh  bool
+	}{
+		{"label after commit", before(8), nil, true},
+		{"commit after label", before(10), nil, false},
+		{"commit at same instant", labelAt, nil, false},
+		{"force push after label", before(8), ptrT(before(10)), false},
+		{"force push before label", before(7), ptrT(before(8)), true},
+	}
+	for _, tc := range tests {
+		for _, mode := range []string{"shadow", "enforce"} {
+			t.Run(tc.name+"/"+mode, func(t *testing.T) {
+				t.Parallel()
+				f := fake([]string{"attested"}, "auth/a.go")
+				f.LabelEv = &gh.LabelEvent{Actor: "boss", At: labelAt}
+				f.CommitDate, f.ForcePush = tc.commit, tc.force
+				rec, err := run.Run(context.Background(), opts(t, mode, "labeled"), f)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if rec.Attestation.Attested != tc.fresh || rec.Check.WouldBlock == tc.fresh {
+					t.Fatalf("attested %v would_block %v", rec.Attestation.Attested, rec.Check.WouldBlock)
+				}
+				wantConclusion := "success"
+				if mode == "enforce" && !tc.fresh {
+					wantConclusion = "failure"
+				}
+				if rec.Check.Conclusion != wantConclusion {
+					t.Fatalf("conclusion %s", rec.Check.Conclusion)
+				}
+			})
+		}
+	}
+}
+
+func TestLabelRemovalFailureFailsEnforce(t *testing.T) {
+	t.Parallel()
+	label := gh.LabelEvent{Actor: "boss", At: time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC)}
+	for _, files := range [][]string{{"auth/a.go"}, {"src/a.go"}} {
+		f := fake([]string{"attested"}, files...)
+		f.LabelEv = &label
+		f.RemoveErr = io.ErrUnexpectedEOF
+		rec, err := run.Run(context.Background(), opts(t, "enforce", "synchronize"), f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Check.Conclusion != "failure" || !rec.Check.WouldBlock || rec.Attestation.Attested {
+			t.Fatalf("%v: check %+v attested %v", files, rec.Check, rec.Attestation.Attested)
+		}
+	}
+	f := fake([]string{"attested"}, "auth/a.go")
+	f.LabelEv = &label
+	f.RemoveErr = io.ErrUnexpectedEOF
+	rec, _ := run.Run(context.Background(), opts(t, "shadow", "synchronize"), f)
+	if rec.Check.Conclusion != "success" {
+		t.Fatalf("shadow conclusion %s", rec.Check.Conclusion)
+	}
+}
+
+func TestTenureLookupFailureBlocksTier0(t *testing.T) {
+	t.Parallel()
+	doc := "version: 1\ndefault_tier: 1\ntiers:\n  0:\n    paths: [\"docs/**\"]\n"
+	f := fake(nil, "docs/a.md")
+	o := opts(t, "shadow", "opened")
+	if err := os.WriteFile(o.TiersPath, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := run.Run(context.Background(), o, f)
+	if err != nil || rec.DetTier != 0 {
+		t.Fatalf("baseline: det %d err %v", rec.DetTier, err)
+	}
+	f.CommitsErr = io.ErrUnexpectedEOF
+	rec, err = run.Run(context.Background(), o, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.DetTier != 1 || rec.Inputs.AuthorCommits180d != nil || rec.Inputs.FirstTimeContributor != nil {
+		t.Fatalf("det %d inputs %+v", rec.DetTier, rec.Inputs)
+	}
+	var found bool
+	for _, u := range rec.Unavailable {
+		found = found || u == "author_commits_180d"
+	}
+	if !found {
+		t.Fatalf("unavailable = %v", rec.Unavailable)
+	}
+}

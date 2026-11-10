@@ -34,3 +34,14 @@ func TestHighAndNewHigh(t *testing.T) {
 		t.Fatal("bad json accepted")
 	}
 }
+
+func TestNewHighIsAMultiset(t *testing.T) {
+	t.Parallel()
+	f := Finding{RuleID: "r", File: "a.go", Message: "m", High: true}
+	if n := NewHigh([]Finding{f}, []Finding{f, f, f}); n != 2 {
+		t.Fatalf("3 in head vs 1 in base = %d new, want 2", n)
+	}
+	if n := NewHigh([]Finding{f, f}, []Finding{f}); n != 0 {
+		t.Fatalf("fewer in head = %d new", n)
+	}
+}

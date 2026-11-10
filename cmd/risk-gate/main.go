@@ -96,6 +96,12 @@ func score(args []string, stdout, stderr io.Writer, getenv func(string) string) 
 	if o.Repo == "" || o.PR < 1 {
 		return fmt.Errorf("--repo and --pr are required")
 	}
+	if (o.SarifBase == "") != (o.SarifHead == "") {
+		return fmt.Errorf("--sarif-base and --sarif-head must be given together")
+	}
+	if (o.CoverageBase == "") != (o.CoverageHead == "") {
+		return fmt.Errorf("--coverage-base and --coverage-head must be given together")
+	}
 	if *apiBreak != "" {
 		b, err := strconv.ParseBool(*apiBreak)
 		if err != nil {

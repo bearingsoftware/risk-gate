@@ -102,17 +102,23 @@ func severity(props map[string]any) float64 {
 	return 0
 }
 
-// NewHigh counts high findings in head that are absent from base, keyed on ruleId, file and message.
+// NewHigh counts high findings in head beyond those matched in base, keyed on ruleId, file and
+// message. Identical findings are counted as a multiset, so 3 in head against 1 in base is 2 new.
 func NewHigh(base, head []Finding) int {
-	seen := map[string]bool{}
+	seen := map[string]int{}
 	for _, f := range base {
-		seen[f.Key()] = true
+		seen[f.Key()]++
 	}
 	n := 0
 	for _, f := range head {
-		if f.High && !seen[f.Key()] {
-			n++
+		if !f.High {
+			continue
 		}
+		if seen[f.Key()] > 0 {
+			seen[f.Key()]--
+			continue
+		}
+		n++
 	}
 	return n
 }

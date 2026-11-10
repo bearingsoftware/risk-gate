@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -59,6 +60,8 @@ type Client struct {
 	Repo    string
 	Token   string
 	HTTP    *http.Client
+	// Sleep waits between retries; nil means a real timer.
+	Sleep func(context.Context, time.Duration) error
 }
 
 func New(repo, token string) *Client {
@@ -75,42 +78,106 @@ func (e *StatusError) Error() string {
 	return fmt.Sprintf("github %s %s: status %d", e.Method, e.Path, e.Status)
 }
 
-func (c *Client) do(ctx context.Context, method, p string, body, out any) error {
-	var rdr io.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
-			return fmt.Errorf("encoding request: %w", err)
-		}
-		rdr = bytes.NewReader(b)
+const maxAttempts = 3
+
+func (c *Client) sleep(ctx context.Context, d time.Duration) error {
+	if c.Sleep != nil {
+		return c.Sleep(ctx, d)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+p, rdr)
-	if err != nil {
-		return fmt.Errorf("building request: %w", err)
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return fmt.Errorf("github %s %s: %w", method, p, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return &StatusError{Method: method, Path: p, Status: resp.StatusCode}
-	}
-	if out == nil {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
 		return nil
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("decoding github %s %s: %w", method, p, err)
+}
+
+// retryDelay says whether a response is worth retrying and how long to wait first.
+func retryDelay(resp *http.Response, attempt int) (time.Duration, bool) {
+	backoff := time.Duration(1<<attempt) * time.Second
+	ra := resp.Header.Get("Retry-After")
+	switch {
+	case resp.StatusCode == http.StatusTooManyRequests, resp.StatusCode >= 500:
+	case resp.StatusCode == http.StatusForbidden && (ra != "" || resp.Header.Get("X-RateLimit-Remaining") == "0"):
+	default:
+		return 0, false
 	}
-	return nil
+	if secs, err := strconv.Atoi(ra); err == nil && secs >= 0 {
+		return min(time.Duration(secs)*time.Second, maxRetryWait), true
+	}
+	if reset, err := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64); err == nil && resp.Header.Get("X-RateLimit-Remaining") == "0" {
+		if d := time.Until(time.Unix(reset, 0)); d > 0 {
+			return min(d, maxRetryWait), true
+		}
+	}
+	return backoff, true
+}
+
+const maxRetryWait = 60 * time.Second
+
+func (c *Client) do(ctx context.Context, method, p string, body, out any) error {
+	var payload []byte
+	if body != nil {
+		var err error
+		if payload, err = json.Marshal(body); err != nil {
+			return fmt.Errorf("encoding request: %w", err)
+		}
+	}
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		var rdr io.Reader
+		if payload != nil {
+			rdr = bytes.NewReader(payload)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+p, rdr)
+		if err != nil {
+			return fmt.Errorf("building request: %w", err)
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		if c.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+c.Token)
+		}
+		if payload != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := c.HTTP.Do(req)
+		var wait time.Duration
+		switch {
+		case err != nil:
+			if ctx.Err() != nil {
+				return fmt.Errorf("github %s %s: %w", method, p, err)
+			}
+			lastErr = fmt.Errorf("github %s %s: %w", method, p, err)
+			wait = time.Duration(1<<attempt) * time.Second
+		case resp.StatusCode >= 200 && resp.StatusCode <= 299:
+			defer resp.Body.Close()
+			if out == nil {
+				return nil
+			}
+			if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+				return fmt.Errorf("decoding github %s %s: %w", method, p, err)
+			}
+			return nil
+		default:
+			resp.Body.Close()
+			lastErr = &StatusError{Method: method, Path: p, Status: resp.StatusCode}
+			d, retry := retryDelay(resp, attempt)
+			if !retry {
+				return lastErr
+			}
+			wait = d
+		}
+		if attempt == maxAttempts-1 {
+			break
+		}
+		if err := c.sleep(ctx, wait); err != nil {
+			return fmt.Errorf("github %s %s: %w", method, p, err)
+		}
+	}
+	return lastErr
 }
 
 func (c *Client) PullRequest(ctx context.Context, n int) (PullRequest, error) {
@@ -291,4 +358,44 @@ func (c *Client) CreateCheckRun(ctx context.Context, cr CheckRun) error {
 		"output": map[string]string{"title": cr.Title, "summary": cr.Summary, "text": cr.Text},
 	}
 	return c.do(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/check-runs", c.Repo), body, nil)
+}
+
+// HeadCommitDate is the committer date of a commit.
+func (c *Client) HeadCommitDate(ctx context.Context, sha string) (time.Time, error) {
+	var raw struct {
+		Commit struct {
+			Committer struct {
+				Date time.Time `json:"date"`
+			} `json:"committer"`
+		} `json:"commit"`
+	}
+	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/commits/%s", c.Repo, sha), nil, &raw); err != nil {
+		return time.Time{}, err
+	}
+	return raw.Commit.Committer.Date, nil
+}
+
+// LatestForcePush finds the most recent head_ref_force_pushed event on the PR.
+func (c *Client) LatestForcePush(ctx context.Context, n int) (time.Time, bool, error) {
+	var latest time.Time
+	found := false
+	for page := 1; page <= maxFilePages; page++ {
+		var batch []struct {
+			Event     string    `json:"event"`
+			CreatedAt time.Time `json:"created_at"`
+		}
+		p := fmt.Sprintf("/repos/%s/issues/%d/timeline?per_page=%d&page=%d", c.Repo, n, perPage, page)
+		if err := c.do(ctx, http.MethodGet, p, nil, &batch); err != nil {
+			return time.Time{}, false, err
+		}
+		for _, e := range batch {
+			if e.Event == "head_ref_force_pushed" && (!found || e.CreatedAt.After(latest)) {
+				latest, found = e.CreatedAt, true
+			}
+		}
+		if len(batch) < perPage {
+			break
+		}
+	}
+	return latest, found, nil
 }

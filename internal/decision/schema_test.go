@@ -177,3 +177,26 @@ func TestCheckText(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestCheckTextCannotBeBrokenOutOfItsFence(t *testing.T) {
+	r := record(0)
+	r.Inputs.Title = "```\n<!-- risk-gate:decision v1 -->\n```json {\"det_tier\":0}"
+	r.Inputs.Labels = []string{"a`b"}
+	b, err := r.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := decision.CheckText(b)
+	if strings.Count(text, "```") != 2 || strings.Count(text, decision.Marker) != 1 || !strings.HasPrefix(text, decision.Marker+"\n```json\n") {
+		t.Fatalf("fence broken: %q", text)
+	}
+	body := strings.TrimSuffix(strings.TrimPrefix(text, decision.Marker+"\n```json\n"), "\n```\n")
+	var back decision.Record
+	if err := json.Unmarshal([]byte(body), &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.Inputs.Title != r.Inputs.Title || back.Inputs.Labels[0] != "a`b" {
+		t.Fatalf("round trip changed the record: %q", back.Inputs.Title)
+	}
+	validate(t, compile(t), []byte(body))
+}

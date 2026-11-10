@@ -280,7 +280,7 @@ func Evaluate(in Input) Result {
 		if cfg.IsBotAuthor(in.Author) && allTier0OrManifest && r.Score == 0 && botTypeOK(cfg, *inputs.BotUpdateType) {
 			mapped = 0
 		}
-	} else if r.Score <= w.Mapping.HumanTier0MaxScore && allTier0 {
+	} else if r.Score <= w.Mapping.HumanTier0MaxScore && allTier0 && in.AuthorCommits180d != nil && in.FirstTimeContributor != nil {
 		mapped = 0
 	}
 	r.DetTier = max(mapped, r.PathTier)

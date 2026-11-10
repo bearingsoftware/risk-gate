@@ -30,6 +30,8 @@ type GitHub interface {
 	RecentMergedPRs(ctx context.Context, branch string, since time.Time, maxPRs, exclude int) (gh.MergedPRs, error)
 	LatestLabelEvent(ctx context.Context, n int, label string) (gh.LabelEvent, bool, error)
 	RemoveLabel(ctx context.Context, n int, label string) error
+	HeadCommitDate(ctx context.Context, sha string) (time.Time, error)
+	LatestForcePush(ctx context.Context, n int) (time.Time, bool, error)
 	CreateCheckRun(ctx context.Context, cr gh.CheckRun) error
 }
 
@@ -254,10 +256,12 @@ func attest(ctx context.Context, g GitHub, o Options, cfg *tiers.Config, pr gh.P
 	}
 	rec.Attestation.Required = rec.DetTier == 2
 	present := slices.Contains(pr.Labels, a.Label)
+	removeFailed := false
 	if present && o.EventAction == "synchronize" {
 		if o.Mode == "enforce" {
 			if err := g.RemoveLabel(ctx, o.PR, a.Label); err != nil {
-				return fmt.Errorf("removing stale attestation label: %w", err)
+				o.Log.Printf("removing stale attestation label: %v", err)
+				removeFailed = true
 			}
 		}
 		present = false
@@ -270,7 +274,7 @@ func attest(ctx context.Context, g GitHub, o Options, cfg *tiers.Config, pr gh.P
 		if found {
 			by, at := ev.Actor, ev.At.UTC()
 			rec.Attestation.By, rec.Attestation.At = &by, &at
-			rec.Attestation.Attested = slices.Contains(a.Permitted, ev.Actor)
+			rec.Attestation.Attested = slices.Contains(a.Permitted, ev.Actor) && freshAfterPush(ctx, g, o, pr, ev.At)
 		}
 	}
 	if rec.Attestation.Required {
@@ -281,10 +285,33 @@ func attest(ctx context.Context, g GitHub, o Options, cfg *tiers.Config, pr gh.P
 			rec.Check.Reason = fmt.Sprintf("tier 2 needs label %q applied by a permitted user after the latest push", a.Label)
 		}
 	}
+	if removeFailed {
+		rec.Check.WouldBlock = true
+		rec.Check.Reason = "could not remove the stale attestation label"
+	}
 	if o.Mode == "enforce" && rec.Check.WouldBlock {
 		rec.Check.Conclusion = "failure"
 	}
 	return nil
+}
+
+// freshAfterPush reports whether the label was applied after the head commit and any force-push.
+// A lookup that fails counts as not fresh.
+func freshAfterPush(ctx context.Context, g GitHub, o Options, pr gh.PullRequest, at time.Time) bool {
+	commit, err := g.HeadCommitDate(ctx, pr.HeadSHA)
+	if err != nil {
+		o.Log.Printf("head commit date unavailable: %v", err)
+		return false
+	}
+	if !at.After(commit) {
+		return false
+	}
+	forced, found, err := g.LatestForcePush(ctx, o.PR)
+	if err != nil {
+		o.Log.Printf("force-push lookup unavailable: %v", err)
+		return false
+	}
+	return !found || at.After(forced)
 }
 
 func attestationLabel(cfg *tiers.Config) string {

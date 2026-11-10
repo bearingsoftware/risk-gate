@@ -68,15 +68,26 @@ func TestLintTiersErrors(t *testing.T) {
 
 func TestScoreFlagErrors(t *testing.T) {
 	t.Parallel()
-	env := func(string) string { return "" }
+	env := func(string) string { return "tok" }
 	for name, args := range map[string][]string{
-		"no repo":       {"score"},
-		"bad api":       {"score", "--repo", "o/r", "--pr", "1", "--api-break", "maybe"},
-		"missing token": {"score", "--repo", "o/r", "--pr", "1"},
+		"no repo":         {"score"},
+		"bad api":         {"score", "--repo", "o/r", "--pr", "1", "--api-break", "maybe"},
+		"sarif base only": {"score", "--repo", "o/r", "--pr", "1", "--sarif-base", "b.sarif"},
+		"sarif head only": {"score", "--repo", "o/r", "--pr", "1", "--sarif-head", "h.sarif"},
+		"cov base only":   {"score", "--repo", "o/r", "--pr", "1", "--coverage-base", "b"},
+		"cov head only":   {"score", "--repo", "o/r", "--pr", "1", "--coverage-head", "h"},
 	} {
 		var out, errb bytes.Buffer
 		if code := execute(args, &out, &errb, env); code != 1 {
 			t.Errorf("%s: exit %d", name, code)
 		}
+		if strings.HasPrefix(name, "sarif") && !strings.Contains(errb.String(), "together") ||
+			strings.HasPrefix(name, "cov") && !strings.Contains(errb.String(), "together") {
+			t.Errorf("%s: stderr = %q", name, errb.String())
+		}
+	}
+	var out, errb bytes.Buffer
+	if code := execute([]string{"score", "--repo", "o/r", "--pr", "1"}, &out, &errb, func(string) string { return "" }); code != 1 || !strings.Contains(errb.String(), "GITHUB_TOKEN") {
+		t.Errorf("missing token: exit %d %q", code, errb.String())
 	}
 }
