@@ -368,3 +368,36 @@ func TestHeadCommitDateAndForcePush(t *testing.T) {
 		t.Fatalf("f=%v ok=%v err=%v", f, ok, err)
 	}
 }
+
+func TestRetryBudgetIsSharedAndFailsFast(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	c, waits, _ := retryClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "50")
+		w.WriteHeader(429)
+	})
+	// 50s per wait: 3 minutes buys three waits across calls, then no more.
+	for i := 0; i < 4; i++ {
+		if _, err := c.PullRequest(context.Background(), 1); err == nil {
+			t.Fatal("expected an error")
+		}
+	}
+	var total time.Duration
+	for _, w := range *waits {
+		total += w
+	}
+	if len(*waits) != 3 || total != 150*time.Second {
+		t.Fatalf("waits = %v", *waits)
+	}
+	before := calls
+	if _, err := c.PullRequest(context.Background(), 1); err == nil {
+		t.Fatal("expected an error")
+	}
+	if calls != before+1 || len(*waits) != 3 {
+		t.Fatalf("spent budget still retried: calls %d, waits %v", calls-before, *waits)
+	}
+	if err := c.CreateCheckRun(context.Background(), CheckRun{Name: "risk-gate"}); err == nil {
+		t.Fatal("publish should fail once the budget is spent")
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -62,10 +63,26 @@ type Client struct {
 	HTTP    *http.Client
 	// Sleep waits between retries; nil means a real timer.
 	Sleep func(context.Context, time.Duration) error
+
+	mu     sync.Mutex
+	budget time.Duration
+}
+
+// RetryBudget is the total backoff wait one client may spend across all calls.
+const RetryBudget = 3 * time.Minute
+
+func (c *Client) spend(d time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if d > c.budget {
+		return false
+	}
+	c.budget -= d
+	return true
 }
 
 func New(repo, token string) *Client {
-	return &Client{BaseURL: DefaultBaseURL, Repo: repo, Token: token, HTTP: &http.Client{Timeout: 30 * time.Second}}
+	return &Client{BaseURL: DefaultBaseURL, Repo: repo, Token: token, HTTP: &http.Client{Timeout: 30 * time.Second}, budget: RetryBudget}
 }
 
 type StatusError struct {
@@ -170,7 +187,7 @@ func (c *Client) do(ctx context.Context, method, p string, body, out any) error 
 			}
 			wait = d
 		}
-		if attempt == maxAttempts-1 {
+		if attempt == maxAttempts-1 || !c.spend(wait) {
 			break
 		}
 		if err := c.sleep(ctx, wait); err != nil {
