@@ -17,6 +17,9 @@ Its `output.text` carries the decision record:
 ```
 ````
 
+- Publisher is pinned: the board accepts a `risk-gate` check run only when its `app.slug` is
+  `github-actions` (risk-gate publishes with the workflow's `GITHUB_TOKEN`). Any other app or token
+  with checks:write could otherwise forge a decision.
 - The marker line is literal. The board parses the first ```` ```json ```` fence after it.
 - Anything else in `output.text` / `output.summary` is for humans and may change freely.
 - The same JSON is uploaded as the workflow artifact `risk-decision` (debugging only; artifacts expire).
