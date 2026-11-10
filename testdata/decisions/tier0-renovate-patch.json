@@ -64,7 +64,8 @@
     "coverage_delta",
     "api_break",
     "author_commits_180d",
-    "first_time_contributor"
+    "first_time_contributor",
+    "sast_new_high"
   ],
   "attestation": {
     "required": false,
