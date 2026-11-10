@@ -27,7 +27,9 @@
   },
   "inputs": {
     "title": "feat: parallel runner",
-    "labels": [],
+    "labels": [
+      "tier2-self-reviewed"
+    ],
     "lines_added": 800,
     "lines_deleted": 103,
     "files_changed": 10,

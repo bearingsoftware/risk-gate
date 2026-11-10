@@ -17,6 +17,9 @@ Its `output.text` carries the decision record:
 ```
 ````
 
+- Publisher is pinned: the board accepts a `risk-gate` check run only when its `app.slug` is
+  `github-actions` (risk-gate publishes with the workflow's `GITHUB_TOKEN`). Any other app or token
+  with checks:write could otherwise forge a decision.
 - The marker line is literal. The board parses the first ```` ```json ```` fence after it.
 - Anything else in `output.text` / `output.summary` is for humans and may change freely.
 - The same JSON is uploaded as the workflow artifact `risk-decision` (debugging only; artifacts expire).
@@ -38,6 +41,10 @@ One record per scoring run. A PR has many (every push, label, review event).
   distribution and outcome stats. `lane = "bot"` is reported separately.
 - An input risk-gate could not compute is `null` **and** named in `unavailable`. Never 0.
 - `mode = "shadow"`: conclusion is always `success`; `check.would_block` says what enforce would do.
+- `attestation.required` = `det_tier == 2` **and** the repo's tier file has an `attestation` block, in both
+  modes. `check.would_block` = `required && !attested`, in both modes. Recorded-only repos therefore never
+  show `would_block`.
+- If GitHub's `changed_files` exceeds the files it returned (3000 cap), floor 2 `file_list_incomplete`.
 - `attestation.attested` is self-attestation by the single maintainer. Report it as attested,
   never as an independent review.
 - Unknown extra fields: ignore. Missing required fields or another `schema` value: reject and log.

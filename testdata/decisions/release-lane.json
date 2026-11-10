@@ -55,7 +55,8 @@
   },
   "unavailable": [
     "coverage_delta",
-    "api_break"
+    "api_break",
+    "sast_new_high"
   ],
   "attestation": {
     "required": false,
