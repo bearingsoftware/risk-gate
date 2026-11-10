@@ -1,0 +1,6 @@
+[tools]
+go = "1.27.3"
+
+[tasks.ci]
+description = "Full CI gate: vet, build, race tests, gofmt"
+run = "go vet ./... && go build ./... && go test -race ./... && test -z \"$(gofmt -l .)\""
