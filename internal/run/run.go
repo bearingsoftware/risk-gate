@@ -285,8 +285,7 @@ func attest(ctx context.Context, g GitHub, o Options, cfg *tiers.Config, pr gh.P
 			rec.Check.Reason = fmt.Sprintf("tier 2 needs label %q applied by a permitted user after the latest push", a.Label)
 		}
 	}
-	if removeFailed {
-		rec.Check.WouldBlock = true
+	if removeFailed && rec.Attestation.Required {
 		rec.Check.Reason = "could not remove the stale attestation label"
 	}
 	if o.Mode == "enforce" && rec.Check.WouldBlock {

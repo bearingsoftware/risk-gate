@@ -348,16 +348,20 @@ func TestStaleAttestationLabel(t *testing.T) {
 func TestLabelRemovalFailureFailsEnforce(t *testing.T) {
 	t.Parallel()
 	label := gh.LabelEvent{Actor: "boss", At: time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC)}
-	for _, files := range [][]string{{"auth/a.go"}, {"src/a.go"}} {
-		f := fake([]string{"attested"}, files...)
+	for _, tc := range []struct {
+		files      []string
+		conclusion string
+		block      bool
+	}{{[]string{"auth/a.go"}, "failure", true}, {[]string{"src/a.go"}, "success", false}} {
+		f := fake([]string{"attested"}, tc.files...)
 		f.LabelEv = &label
 		f.RemoveErr = io.ErrUnexpectedEOF
 		rec, err := run.Run(context.Background(), opts(t, "enforce", "synchronize"), f)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if rec.Check.Conclusion != "failure" || !rec.Check.WouldBlock || rec.Attestation.Attested {
-			t.Fatalf("%v: check %+v attested %v", files, rec.Check, rec.Attestation.Attested)
+		if rec.Check.Conclusion != tc.conclusion || rec.Check.WouldBlock != tc.block || rec.Attestation.Attested {
+			t.Fatalf("%v: check %+v attested %v", tc.files, rec.Check, rec.Attestation.Attested)
 		}
 	}
 	f := fake([]string{"attested"}, "auth/a.go")
