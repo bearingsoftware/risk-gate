@@ -361,14 +361,52 @@ func TestClassifyDedupeIsPerRepoAndPR(t *testing.T) {
 	}
 }
 
+func TestClassifyGitHubReadFailureRecordsSkip(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		break_ func(g *ghfake.Fake)
+	}{
+		{"pull request fetch", func(g *ghfake.Fake) { g.PRErr = errors.New("boom") }},
+		{"pull request 403", func(g *ghfake.Fake) {
+			g.PRErr = &gh.StatusError{Method: "GET", Path: "/pulls/1302", Status: http.StatusForbidden}
+		}},
+		{"files fetch", func(g *ghfake.Fake) { g.FilesErr = errors.New("boom") }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			o, g := setup(t, "human")
+			api := &stubAPI{resp: okResp()}
+			o.API = api
+			var written []decision.AIRecord
+			o.Write = func(r decision.AIRecord) error { written = append(written, r); return nil }
+			tc.break_(g)
+			rec, err := Classify(context.Background(), o, g)
+			if err != nil || rec == nil || rec.Status != decision.AISkipped || rec.SkipReason == nil || *rec.SkipReason != decision.SkipAPIError {
+				t.Fatalf("rec %+v err %v", rec, err)
+			}
+			if api.calls != 0 || len(g.Checks) != 1 || len(written) != 1 {
+				t.Fatalf("calls %d checks %d written %d", api.calls, len(g.Checks), len(written))
+			}
+			cr := g.Checks[0]
+			if cr.Name != "risk-gate-ai" || cr.HeadSHA != headSHA {
+				t.Fatalf("check run %+v", cr)
+			}
+			back, ok := decision.ParseAICheckText(cr.Text)
+			if !ok || back.Status != decision.AISkipped || back.HeadSHA != headSHA {
+				t.Fatalf("check text does not parse as a skip: %+v", back)
+			}
+		})
+	}
+}
+
 func TestClassifyDataFailuresNeverFail(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
 		break_ func(o *ClassifyOptions, g *ghfake.Fake)
 	}{
-		{"pull request fetch", func(o *ClassifyOptions, g *ghfake.Fake) { g.PRErr = errors.New("boom") }},
-		{"files fetch", func(o *ClassifyOptions, g *ghfake.Fake) { g.FilesErr = errors.New("boom") }},
 		{"missing decision", func(o *ClassifyOptions, g *ghfake.Fake) { o.DecisionPath += ".nope" }},
 		{"garbage decision", func(o *ClassifyOptions, g *ghfake.Fake) {
 			if err := os.WriteFile(o.DecisionPath, []byte("{"), 0o644); err != nil {

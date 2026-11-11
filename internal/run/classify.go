@@ -52,7 +52,8 @@ type ClassifyOptions struct {
 }
 
 // Classify records one AI benchmark for the PR head. It returns nil when nothing was recorded:
-// a moved head, a failed GitHub or file read, or a head that already has a classified record.
+// a moved head, a failed local file read, or a head that already has a classified record.
+// A failed GitHub read of the PR or its files records a skip on the decision's head.
 // Only misuse (an unsupported event) is an error.
 func Classify(ctx context.Context, o ClassifyOptions, g ClassifyGitHub) (*decision.AIRecord, error) {
 	soft := func(err error) (*decision.AIRecord, error) {
@@ -82,22 +83,33 @@ func Classify(ctx context.Context, o ClassifyOptions, g ClassifyGitHub) (*decisi
 	if err != nil {
 		return nil, err
 	}
+	newRec := func(base, head string) decision.AIRecord {
+		return decision.AIRecord{
+			Schema: decision.AISchema, Repo: o.Repo, PR: o.PR, BaseSHA: base, HeadSHA: head,
+			Run:           decision.Run{ID: o.RunID, Attempt: max(o.RunAttempt, 1), Event: event, Action: o.EventAction, At: o.Now().UTC()},
+			PromptVersion: prompt.Version, PromptSHA256: prompt.SHA256(), ModelRequested: classify.Model,
+			DetTier: det.DetTier, WeightsVersion: det.Scorer.WeightsVer, Lane: det.Lane,
+		}
+	}
+
 	pr, err := g.PullRequest(ctx, o.PR)
 	if err != nil {
-		return soft(fmt.Errorf("fetching pull request: %w", err))
+		o.Log.Printf("::warning::AI benchmark skipped: fetching pull request: %v", err)
+		if classified(ctx, g, o, det.HeadSHA) {
+			o.Log.Printf("::notice::already classified")
+			return nil, nil
+		}
+		rec := newRec(det.BaseSHA, det.HeadSHA)
+		markSkipped(&rec, decision.SkipAPIError)
+		return persist(ctx, g, o, rec), nil
 	}
 	if det.HeadSHA != pr.HeadSHA {
 		o.Log.Printf("::notice::head moved (scored %s, now %s), a newer run classifies", det.HeadSHA, pr.HeadSHA)
 		return nil, nil
 	}
 
-	rec := decision.AIRecord{
-		Schema: decision.AISchema, Repo: o.Repo, PR: o.PR, BaseSHA: pr.BaseSHA, HeadSHA: pr.HeadSHA,
-		Run:           decision.Run{ID: o.RunID, Attempt: max(o.RunAttempt, 1), Event: event, Action: o.EventAction, At: o.Now().UTC()},
-		PromptVersion: prompt.Version, PromptSHA256: prompt.SHA256(), ModelRequested: classify.Model,
-		DetTier: det.DetTier, WeightsVersion: det.Scorer.WeightsVer, Lane: det.Lane,
-	}
-	skip := func(reason string) { rec.Status, rec.SkipReason = decision.AISkipped, &reason }
+	rec := newRec(pr.BaseSHA, pr.HeadSHA)
+	skip := func(reason string) { markSkipped(&rec, reason) }
 
 	if pr.Fork {
 		skip(decision.SkipFork)
@@ -123,7 +135,9 @@ func Classify(ctx context.Context, o ClassifyOptions, g ClassifyGitHub) (*decisi
 	default:
 		in, err := classifyInput(ctx, g, o, pr, tiersData, detData)
 		if err != nil {
-			return soft(err)
+			o.Log.Printf("::warning::AI benchmark skipped: %v", err)
+			skip(decision.SkipAPIError)
+			break
 		}
 		out := classify.Classify(ctx, o.API, prompt, in, o.Log)
 		rec.AI, rec.Usage, rec.CostUSD, rec.LatencyMS, rec.DiffTruncated = out.AI, out.Usage, out.CostUSD, out.LatencyMS, out.DiffTruncated
@@ -135,13 +149,21 @@ func Classify(ctx context.Context, o ClassifyOptions, g ClassifyGitHub) (*decisi
 			skip(out.SkipReason)
 		}
 	}
+	return persist(ctx, g, o, rec), nil
+}
+
+func markSkipped(rec *decision.AIRecord, reason string) {
+	rec.Status, rec.SkipReason = decision.AISkipped, &reason
+}
+
+func persist(ctx context.Context, g ClassifyGitHub, o ClassifyOptions, rec decision.AIRecord) *decision.AIRecord {
 	if o.Write != nil {
 		if err := o.Write(rec); err != nil {
 			o.Log.Printf("::warning::AI record not written: %v", err)
 		}
 	}
 	publishAI(ctx, g, o, rec)
-	return &rec, nil
+	return &rec
 }
 
 func classified(ctx context.Context, g ClassifyGitHub, o ClassifyOptions, sha string) bool {
