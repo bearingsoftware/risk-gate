@@ -91,3 +91,34 @@ func TestScoreFlagErrors(t *testing.T) {
 		t.Errorf("missing token: exit %d %q", code, errb.String())
 	}
 }
+
+func TestWeightsFlagPrecedence(t *testing.T) {
+	t.Parallel()
+	tp := filepath.Join(t.TempDir(), "tiers.yml")
+	if err := os.WriteFile(tp, []byte(tiersDoc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := func(k string) string {
+		if k == "GITHUB_TOKEN" {
+			return "tok"
+		}
+		return ""
+	}
+	base := []string{"score", "--repo", "o/r", "--pr", "1", "--tiers", tp}
+	for _, tc := range []struct {
+		name    string
+		extra   []string
+		wantErr string
+	}{
+		{"path wins over version", []string{"--weights", "/nonexistent/w.yml", "--weights-version", "99"}, "reading weights"},
+		{"unknown version", []string{"--weights-version", "99"}, "unknown weights version 99"},
+	} {
+		var out, errb bytes.Buffer
+		if code := execute(append(append([]string{}, base...), tc.extra...), &out, &errb, env); code != 1 {
+			t.Errorf("%s: exit %d", tc.name, code)
+		}
+		if !strings.Contains(errb.String(), tc.wantErr) {
+			t.Errorf("%s: stderr = %q", tc.name, errb.String())
+		}
+	}
+}

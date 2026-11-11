@@ -35,6 +35,7 @@ type PullRequest struct {
 	HeadRef      string
 	HeadSHA      string
 	ChangedFiles int
+	Fork         bool
 }
 
 type File struct {
@@ -209,9 +210,19 @@ func (c *Client) PullRequest(ctx context.Context, n int) (PullRequest, error) {
 			Login string `json:"login"`
 			Type  string `json:"type"`
 		} `json:"user"`
-		Base         struct{ Ref, SHA string } `json:"base"`
-		Head         struct{ Ref, SHA string } `json:"head"`
-		ChangedFiles int                       `json:"changed_files"`
+		Base struct {
+			Ref, SHA string
+			Repo     *struct {
+				FullName string `json:"full_name"`
+			} `json:"repo"`
+		} `json:"base"`
+		Head struct {
+			Ref, SHA string
+			Repo     *struct {
+				FullName string `json:"full_name"`
+			} `json:"repo"`
+		} `json:"head"`
+		ChangedFiles int `json:"changed_files"`
 	}
 	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/pulls/%d", c.Repo, n), nil, &raw); err != nil {
 		return PullRequest{}, err
@@ -221,6 +232,7 @@ func (c *Client) PullRequest(ctx context.Context, n int) (PullRequest, error) {
 		Author: raw.User.Login, AuthorBot: raw.User.Type == "Bot" || strings.HasSuffix(raw.User.Login, "[bot]"),
 		BaseRef: raw.Base.Ref, BaseSHA: raw.Base.SHA, HeadRef: raw.Head.Ref, HeadSHA: raw.Head.SHA,
 		ChangedFiles: raw.ChangedFiles, Labels: []string{},
+		Fork: raw.Head.Repo == nil || raw.Base.Repo == nil || raw.Head.Repo.FullName != raw.Base.Repo.FullName,
 	}
 	for _, l := range raw.Labels {
 		pr.Labels = append(pr.Labels, l.Name)
@@ -358,6 +370,11 @@ func (c *Client) RemoveLabel(ctx context.Context, n int, label string) error {
 		return nil
 	}
 	return err
+}
+
+// AddLabel adds a label to the PR, creating the label if it does not exist.
+func (c *Client) AddLabel(ctx context.Context, n int, label string) error {
+	return c.do(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/labels", c.Repo, n), map[string][]string{"labels": {label}}, nil)
 }
 
 type CheckRun struct {

@@ -18,6 +18,7 @@ import (
 	"github.com/bearingsoftware/risk-gate/internal/sarif"
 	"github.com/bearingsoftware/risk-gate/internal/score"
 	"github.com/bearingsoftware/risk-gate/internal/tiers"
+	"github.com/bearingsoftware/risk-gate/weights"
 )
 
 const ScorerVersion = "0.1.0"
@@ -30,6 +31,7 @@ type GitHub interface {
 	RecentMergedPRs(ctx context.Context, branch string, since time.Time, maxPRs, exclude int) (gh.MergedPRs, error)
 	LatestLabelEvent(ctx context.Context, n int, label string) (gh.LabelEvent, bool, error)
 	RemoveLabel(ctx context.Context, n int, label string) error
+	AddLabel(ctx context.Context, n int, label string) error
 	HeadCommitDate(ctx context.Context, sha string) (time.Time, error)
 	LatestForcePush(ctx context.Context, n int) (time.Time, bool, error)
 	CreateCheckRun(ctx context.Context, cr gh.CheckRun) error
@@ -40,6 +42,7 @@ type Options struct {
 	PR           int
 	TiersPath    string
 	WeightsPath  string
+	WeightsVer   int
 	Mode         string
 	SarifBase    string
 	SarifHead    string
@@ -51,6 +54,7 @@ type Options struct {
 	Event        string
 	EventAction  string
 	Publish      bool
+	Label        bool
 	Now          func() time.Time
 	Log          *log.Logger
 }
@@ -69,9 +73,9 @@ func Run(ctx context.Context, o Options, g GitHub) (decision.Record, error) {
 	if err != nil {
 		return decision.Record{}, err
 	}
-	weightsData, err := os.ReadFile(o.WeightsPath)
+	weightsData, err := loadWeights(o)
 	if err != nil {
-		return decision.Record{}, fmt.Errorf("reading weights: %w", err)
+		return decision.Record{}, err
 	}
 	w, err := score.ParseWeights(weightsData)
 	if err != nil {
@@ -138,6 +142,10 @@ func Run(ctx context.Context, o Options, g GitHub) (decision.Record, error) {
 	if err != nil {
 		return decision.Record{}, err
 	}
+	if (o.Publish || o.Label) && pr.Fork {
+		o.Log.Printf("::notice::fork pull request: token is read-only, skipping check run and label")
+		return rec, nil
+	}
 	if o.Publish {
 		err := g.CreateCheckRun(ctx, gh.CheckRun{
 			Name: checkName, HeadSHA: pr.HeadSHA, Conclusion: rec.Check.Conclusion,
@@ -149,7 +157,40 @@ func Run(ctx context.Context, o Options, g GitHub) (decision.Record, error) {
 			return decision.Record{}, fmt.Errorf("publishing check run: %w", err)
 		}
 	}
+	if o.Label {
+		if err := setTierLabel(ctx, g, o.PR, pr.Labels, rec.DetTier); err != nil {
+			o.Log.Printf("tier label not applied: %v", err)
+		}
+	}
 	return rec, nil
+}
+
+const tierLabelPrefix = "risk:tier-"
+
+func setTierLabel(ctx context.Context, g GitHub, n int, current []string, tier int) error {
+	want := fmt.Sprintf("%s%d", tierLabelPrefix, tier)
+	for _, l := range current {
+		if strings.HasPrefix(l, tierLabelPrefix) && l != want {
+			if err := g.RemoveLabel(ctx, n, l); err != nil {
+				return fmt.Errorf("removing %s: %w", l, err)
+			}
+		}
+	}
+	if err := g.AddLabel(ctx, n, want); err != nil {
+		return fmt.Errorf("adding %s: %w", want, err)
+	}
+	return nil
+}
+
+func loadWeights(o Options) ([]byte, error) {
+	if o.WeightsPath != "" {
+		b, err := os.ReadFile(o.WeightsPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading weights: %w", err)
+		}
+		return b, nil
+	}
+	return weights.Load(max(o.WeightsVer, 1))
 }
 
 func normaliseEvent(e string) (string, error) {

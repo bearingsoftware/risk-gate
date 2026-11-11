@@ -401,3 +401,62 @@ func TestTenureLookupFailureBlocksTier0(t *testing.T) {
 		t.Fatalf("unavailable = %v", rec.Unavailable)
 	}
 }
+
+func TestTierLabel(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		labels      []string
+		files       []string
+		wantAdded   []string
+		wantRemoved []string
+	}{
+		{"none present", nil, []string{"src/a.go"}, []string{"risk:tier-1"}, nil},
+		{"replaces other tiers", []string{"risk:tier-0", "risk:tier-1", "keep"}, []string{"auth/a.go"}, []string{"risk:tier-2"}, []string{"risk:tier-0", "risk:tier-1"}},
+		{"already right", []string{"risk:tier-2"}, []string{"auth/a.go"}, []string{"risk:tier-2"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := fake(tc.labels, tc.files...)
+			o := opts(t, "shadow", "opened")
+			o.Label = true
+			if _, err := run.Run(context.Background(), o, f); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(f.Added, ",") != strings.Join(tc.wantAdded, ",") || strings.Join(f.Removed, ",") != strings.Join(tc.wantRemoved, ",") {
+				t.Fatalf("added %v removed %v", f.Added, f.Removed)
+			}
+		})
+	}
+}
+
+func TestLabelFailureDoesNotFailRun(t *testing.T) {
+	t.Parallel()
+	f := fake([]string{"risk:tier-1"}, "auth/a.go")
+	f.RemoveErr = io.ErrUnexpectedEOF
+	o := opts(t, "shadow", "opened")
+	o.Label = true
+	if _, err := run.Run(context.Background(), o, f); err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+}
+
+func TestForkPRSkipsWrites(t *testing.T) {
+	t.Parallel()
+	f := fake([]string{"risk:tier-0"}, "auth/a.go")
+	f.PR.Fork = true
+	o := opts(t, "shadow", "opened")
+	o.Publish, o.Label = true, true
+	var logs strings.Builder
+	o.Log = log.New(&logs, "", 0)
+	rec, err := run.Run(context.Background(), o, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.DetTier != 2 || len(f.Checks) != 0 || len(f.Added) != 0 || len(f.Removed) != 0 {
+		t.Fatalf("writes on fork: checks %d added %v removed %v", len(f.Checks), f.Added, f.Removed)
+	}
+	if !strings.Contains(logs.String(), "::notice::") {
+		t.Fatalf("logs = %q", logs.String())
+	}
+}

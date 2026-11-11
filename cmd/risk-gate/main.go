@@ -81,7 +81,8 @@ func score(args []string, stdout, stderr io.Writer, getenv func(string) string) 
 	fs.StringVar(&o.Repo, "repo", "", "owner/name")
 	fs.IntVar(&o.PR, "pr", 0, "pull request number")
 	fs.StringVar(&o.TiersPath, "tiers", ".github/review-tiers.yml", "tiers file")
-	fs.StringVar(&o.WeightsPath, "weights", "weights/v1.yml", "weights file")
+	fs.StringVar(&o.WeightsPath, "weights", "", "weights file; wins over --weights-version")
+	fs.IntVar(&o.WeightsVer, "weights-version", 1, "embedded weights version N (weights/vN.yml)")
 	fs.StringVar(&o.Mode, "mode", "shadow", "shadow or enforce")
 	fs.StringVar(&o.SarifBase, "sarif-base", "", "SARIF from the base branch")
 	fs.StringVar(&o.SarifHead, "sarif-head", "", "SARIF from the PR head")
@@ -90,6 +91,7 @@ func score(args []string, stdout, stderr io.Writer, getenv func(string) string) 
 	apiBreak := fs.String("api-break", "", "true or false when an API-break check ran")
 	out := fs.String("out", "", "write the decision JSON here")
 	fs.BoolVar(&o.Publish, "publish", false, "create the risk-gate check run")
+	fs.BoolVar(&o.Label, "label", false, "set the single risk:tier-N label on the PR")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

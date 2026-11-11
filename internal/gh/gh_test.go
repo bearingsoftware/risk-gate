@@ -401,3 +401,39 @@ func TestRetryBudgetIsSharedAndFailsFast(t *testing.T) {
 		t.Fatal("publish should fail once the budget is spent")
 	}
 }
+
+func TestAddLabel(t *testing.T) {
+	t.Parallel()
+	var body string
+	c, rec := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		io.WriteString(w, "[]")
+	})
+	if err := c.AddLabel(context.Background(), 5, "risk:tier-1"); err != nil {
+		t.Fatal(err)
+	}
+	if rec.reqs[0] != "POST /repos/o/r/issues/5/labels" || strings.TrimSpace(body) != `{"labels":["risk:tier-1"]}` {
+		t.Fatalf("request = %s body = %s", rec.reqs[0], body)
+	}
+}
+
+func TestPullRequestFork(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		head string
+		want bool
+	}{
+		"same repo":    {`{"ref":"a","sha":"s","repo":{"full_name":"o/r"}}`, false},
+		"fork":         {`{"ref":"a","sha":"s","repo":{"full_name":"x/r"}}`, true},
+		"deleted fork": {`{"ref":"a","sha":"s","repo":null}`, true},
+	} {
+		c, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, `{"number":1,"user":{"login":"a"},"base":{"ref":"main","sha":"b","repo":{"full_name":"o/r"}},"head":`+tc.head+`}`)
+		})
+		pr, err := c.PullRequest(context.Background(), 1)
+		if err != nil || pr.Fork != tc.want {
+			t.Errorf("%s: fork = %v, err = %v", name, pr.Fork, err)
+		}
+	}
+}

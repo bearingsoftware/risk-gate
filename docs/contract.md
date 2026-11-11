@@ -22,6 +22,9 @@ Its `output.text` carries the decision record:
   with checks:write could otherwise forge a decision.
 - The marker line is literal. The board parses the first ```` ```json ```` fence after it.
 - Anything else in `output.text` / `output.summary` is for humans and may change freely.
+- Each run also sets exactly one label `risk:tier-<det_tier>` on the PR, replacing any other `risk:tier-*`
+  (convenience for humans; the check run stays the source of truth). Fork PRs get neither label nor check run
+  (read-only token); the artifact is still written.
 - The same JSON is uploaded as the workflow artifact `risk-decision` (debugging only; artifacts expire).
 - `output.text` is capped by GitHub at 65,535 chars. The record stays under 60,000:
   `inputs.files` is capped at 300 entries and `inputs.files_truncated` says so.
@@ -48,6 +51,12 @@ One record per scoring run. A PR has many (every push, label, review event).
 - `attestation.attested` is self-attestation by the single maintainer. Report it as attested,
   never as an independent review.
 - Unknown extra fields: ignore. Missing required fields or another `schema` value: reject and log.
+
+## Reusable workflow
+
+Consumers call `.github/workflows/risk-gate.yml` (`on: workflow_call`). Inputs: `runs-on` (JSON array of
+labels), `mode` (default `shadow`), `weights-version` (default `"2"`, embedded in the binary), `risk-gate-ref`
+(the commit SHA the caller pinned `uses:` to; the binary is installed from it). See the README.
 
 ## Changing the contract
 

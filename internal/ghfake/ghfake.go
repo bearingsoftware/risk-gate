@@ -20,6 +20,7 @@ type Fake struct {
 	RemoveErr    error
 
 	Removed []string
+	Added   []string
 	Checks  []gh.CheckRun
 }
 
@@ -49,6 +50,11 @@ func (f *Fake) RemoveLabel(_ context.Context, _ int, label string) error {
 		return f.RemoveErr
 	}
 	f.Removed = append(f.Removed, label)
+	return nil
+}
+
+func (f *Fake) AddLabel(_ context.Context, _ int, label string) error {
+	f.Added = append(f.Added, label)
 	return nil
 }
 
