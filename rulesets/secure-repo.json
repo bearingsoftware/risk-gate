@@ -1,0 +1,90 @@
+{
+  "name": "trial-integration",
+  "target": "branch",
+  "enforcement": "__ENFORCEMENT__",
+  "conditions": {
+    "ref_name": {
+      "include": [
+        "refs/heads/develop"
+      ],
+      "exclude": []
+    }
+  },
+  "bypass_actors": [],
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "required_status_checks": [
+          {
+            "context": "action-paths",
+            "integration_id": 15368
+          },
+          {
+            "context": "component-api",
+            "integration_id": 15368
+          },
+          {
+            "context": "component-cli",
+            "integration_id": 15368
+          },
+          {
+            "context": "component-mcp",
+            "integration_id": 15368
+          },
+          {
+            "context": "component-web",
+            "integration_id": 15368
+          },
+          {
+            "context": "docs",
+            "integration_id": 15368
+          },
+          {
+            "context": "e2e",
+            "integration_id": 15368
+          },
+          {
+            "context": "frontend",
+            "integration_id": 15368
+          },
+          {
+            "context": "lint",
+            "integration_id": 15368
+          },
+          {
+            "context": "mutation-pilot",
+            "integration_id": 15368
+          },
+          {
+            "context": "op-map-spec",
+            "integration_id": 15368
+          },
+          {
+            "context": "security",
+            "integration_id": 15368
+          },
+          {
+            "context": "setup-action",
+            "integration_id": 15368
+          },
+          {
+            "context": "test",
+            "integration_id": 15368
+          },
+          {
+            "context": "title",
+            "integration_id": 15368
+          }
+        ]
+      }
+    }
+  ]
+}
