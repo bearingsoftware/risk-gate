@@ -18,8 +18,10 @@ type Fake struct {
 	ForcePush    *time.Time
 	CommitsErr   error
 	RemoveErr    error
+	CheckErr     error
 
 	Removed []string
+	Added   []string
 	Checks  []gh.CheckRun
 }
 
@@ -52,7 +54,15 @@ func (f *Fake) RemoveLabel(_ context.Context, _ int, label string) error {
 	return nil
 }
 
+func (f *Fake) AddLabel(_ context.Context, _ int, label string) error {
+	f.Added = append(f.Added, label)
+	return nil
+}
+
 func (f *Fake) CreateCheckRun(_ context.Context, cr gh.CheckRun) error {
+	if f.CheckErr != nil {
+		return f.CheckErr
+	}
 	f.Checks = append(f.Checks, cr)
 	return nil
 }
