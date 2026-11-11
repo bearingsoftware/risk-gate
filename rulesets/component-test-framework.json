@@ -1,0 +1,51 @@
+{
+  "name": "trial-integration",
+  "target": "branch",
+  "enforcement": "__ENFORCEMENT__",
+  "conditions": {
+    "ref_name": {
+      "include": [
+        "refs/heads/main"
+      ],
+      "exclude": []
+    }
+  },
+  "bypass_actors": [],
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "required_status_checks": [
+          {
+            "context": "build",
+            "integration_id": 15368
+          },
+          {
+            "context": "lint",
+            "integration_id": 15368
+          },
+          {
+            "context": "parallel-reference",
+            "integration_id": 15368
+          },
+          {
+            "context": "playwright-test-example",
+            "integration_id": 15368
+          },
+          {
+            "context": "unit-test",
+            "integration_id": 15368
+          }
+        ],
+        "do_not_enforce_on_create": false
+      }
+    }
+  ]
+}
