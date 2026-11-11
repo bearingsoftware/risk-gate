@@ -100,7 +100,11 @@ func Classify(ctx context.Context, o ClassifyOptions, g ClassifyGitHub) (*decisi
 			return nil, nil
 		}
 		rec := newRec(det.BaseSHA, det.HeadSHA)
-		markSkipped(&rec, decision.SkipAPIError)
+		if det.Lane != "human" {
+			markSkipped(&rec, decision.SkipNotHumanLane)
+		} else {
+			markSkipped(&rec, decision.SkipAPIError)
+		}
 		return persist(ctx, g, o, rec), nil
 	}
 	if det.HeadSHA != pr.HeadSHA {

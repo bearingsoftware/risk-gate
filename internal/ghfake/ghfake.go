@@ -19,6 +19,7 @@ type Fake struct {
 	CommitsErr   error
 	RemoveErr    error
 	CheckErr     error
+	CheckRunsErr error
 	PRErr        error
 	FilesErr     error
 	DiffText     string
@@ -84,6 +85,9 @@ func (f *Fake) LatestForcePush(context.Context, int) (time.Time, bool, error) {
 func (f *Fake) Diff(context.Context, int) (string, error) { return f.DiffText, f.DiffErr }
 
 func (f *Fake) CheckRuns(_ context.Context, _, name string) ([]gh.CheckRunInfo, error) {
+	if f.CheckRunsErr != nil {
+		return nil, f.CheckRunsErr
+	}
 	var out []gh.CheckRunInfo
 	for _, c := range f.Existing {
 		if c.Name == name {

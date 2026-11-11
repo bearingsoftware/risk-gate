@@ -3,6 +3,7 @@ package run
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -365,39 +366,77 @@ func TestClassifyGitHubReadFailureRecordsSkip(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
+		lane   string
 		break_ func(g *ghfake.Fake)
+		want   string
 	}{
-		{"pull request fetch", func(g *ghfake.Fake) { g.PRErr = errors.New("boom") }},
-		{"pull request 403", func(g *ghfake.Fake) {
+		{"pull request fetch", "human", func(g *ghfake.Fake) { g.PRErr = errors.New("boom") }, decision.SkipAPIError},
+		{"pull request 403", "human", func(g *ghfake.Fake) {
 			g.PRErr = &gh.StatusError{Method: "GET", Path: "/pulls/1302", Status: http.StatusForbidden}
-		}},
-		{"files fetch", func(g *ghfake.Fake) { g.FilesErr = errors.New("boom") }},
+		}, decision.SkipAPIError},
+		{"files fetch", "human", func(g *ghfake.Fake) { g.FilesErr = errors.New("boom") }, decision.SkipAPIError},
+		{"pull request fetch, bot lane", "bot", func(g *ghfake.Fake) { g.PRErr = errors.New("boom") }, decision.SkipNotHumanLane},
 	}
+	s := aiSchema(t)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			o, g := setup(t, "human")
+			o, g := setup(t, tc.lane)
 			api := &stubAPI{resp: okResp()}
 			o.API = api
 			var written []decision.AIRecord
 			o.Write = func(r decision.AIRecord) error { written = append(written, r); return nil }
 			tc.break_(g)
 			rec, err := Classify(context.Background(), o, g)
-			if err != nil || rec == nil || rec.Status != decision.AISkipped || rec.SkipReason == nil || *rec.SkipReason != decision.SkipAPIError {
+			if err != nil || rec == nil || rec.Status != decision.AISkipped || rec.SkipReason == nil || *rec.SkipReason != tc.want {
 				t.Fatalf("rec %+v err %v", rec, err)
 			}
 			if api.calls != 0 || len(g.Checks) != 1 || len(written) != 1 {
 				t.Fatalf("calls %d checks %d written %d", api.calls, len(g.Checks), len(written))
 			}
+			if w := written[0]; w.Status != decision.AISkipped || w.SkipReason == nil || *w.SkipReason != tc.want {
+				t.Fatalf("--out record %+v", w)
+			}
 			cr := g.Checks[0]
 			if cr.Name != "risk-gate-ai" || cr.HeadSHA != headSHA {
 				t.Fatalf("check run %+v", cr)
 			}
+			if !strings.HasPrefix(cr.Text, decision.AIMarker+"\n```json\n") {
+				t.Fatalf("text %q", cr.Text)
+			}
+			body := strings.TrimSuffix(strings.TrimPrefix(cr.Text, decision.AIMarker+"\n```json\n"), "\n```\n")
+			if err := validateJSON(s, body); err != nil {
+				t.Fatalf("schema: %v\n%s", err, body)
+			}
 			back, ok := decision.ParseAICheckText(cr.Text)
-			if !ok || back.Status != decision.AISkipped || back.HeadSHA != headSHA {
-				t.Fatalf("check text does not parse as a skip: %+v", back)
+			if !ok || back.Status != decision.AISkipped || back.HeadSHA != headSHA || back.SkipReason == nil || *back.SkipReason != tc.want {
+				t.Fatalf("check text does not parse as the expected skip: %+v", back)
+			}
+			var det decision.Record
+			detData, err := os.ReadFile(o.DecisionPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(detData, &det); err != nil {
+				t.Fatal(err)
+			}
+			if back.BaseSHA != det.BaseSHA {
+				t.Fatalf("base_sha %q, want decision base %q", back.BaseSHA, det.BaseSHA)
 			}
 		})
+	}
+}
+
+func TestClassifyFetchFailureSurvivesDedupeLookupError(t *testing.T) {
+	t.Parallel()
+	o, g := setup(t, "human")
+	g.PRErr = errors.New("boom")
+	g.CheckRunsErr = errors.New("checks unavailable")
+	api := &stubAPI{resp: okResp()}
+	o.API = api
+	rec, err := Classify(context.Background(), o, g)
+	if err != nil || rec == nil || rec.Status != decision.AISkipped || api.calls != 0 || len(g.Checks) != 1 {
+		t.Fatalf("rec %+v err %v calls %d checks %d", rec, err, api.calls, len(g.Checks))
 	}
 }
 
