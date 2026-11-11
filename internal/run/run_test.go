@@ -217,6 +217,37 @@ func TestHotFilesNeedMoreThanThreePRs(t *testing.T) {
 	}
 }
 
+func TestHotFilesHonourWeights(t *testing.T) {
+	t.Parallel()
+	merged := gh.MergedPRs{Examined: 5, Files: [][]string{
+		{"src/a.go"}, {"src/a.go"}, {"src/a.go"}, {"src/a.go"}, {"src/a.go"},
+	}}
+	tests := []struct {
+		name    string
+		weights string
+		want    int
+	}{
+		{"v1 threshold 3, five PRs touch it", "../../weights/v1.yml", 1},
+		{"v2 threshold 8, five PRs do not", "../../weights/v2.yml", 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := fake(nil, "src/a.go")
+			f.Merged = merged
+			o := opts(t, "shadow", "opened")
+			o.WeightsPath = tc.weights
+			rec, err := run.Run(context.Background(), o, f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rec.Inputs.HotFiles == nil || *rec.Inputs.HotFiles != tc.want {
+				t.Fatalf("hot files = %v, want %d", rec.Inputs.HotFiles, tc.want)
+			}
+		})
+	}
+}
+
 func TestOptionalSignals(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

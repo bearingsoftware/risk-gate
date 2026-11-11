@@ -1,0 +1,21 @@
+version: "2"
+
+size:
+  - {max_lines: 50, points: 0}
+  - {max_lines: 200, points: 1}
+  - {max_lines: 500, points: 2}
+  - {points: 3}
+diffusion_files: {over: 5, points: 1}
+diffusion_dirs: {over: 2, points: 1}
+no_tests: {non_test_lines_over: 50, points: 2}
+bug_fix: {points: 2}
+revert_or_hotfix: {points: 2}
+coverage_drop: {points: 1}
+author_tenure: {commits_180d_under: 5, points: 2}
+hot_files: {at_least: 1, points: 1}
+hot_file_lookback: {days: 30, max_prs: 100, touched_by_more_than: 8}
+dep_manifest: {lockfiles_alone_floor: false}
+
+mapping:
+  human_tier0_max_score: 1
+  tier1_max_score: 5
