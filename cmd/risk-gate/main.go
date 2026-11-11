@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bearingsoftware/risk-gate/internal/classify"
+	"github.com/bearingsoftware/risk-gate/internal/decision"
 	"github.com/bearingsoftware/risk-gate/internal/gh"
 	"github.com/bearingsoftware/risk-gate/internal/run"
 	"github.com/bearingsoftware/risk-gate/internal/tiers"
@@ -183,21 +184,21 @@ func classifyCmd(args []string, stdout, stderr io.Writer, getenv func(string) st
 	o.Now = time.Now
 	o.Log = log.New(stderr, "", 0)
 
+	if *out != "" {
+		o.Write = func(rec decision.AIRecord) error {
+			b, err := rec.Marshal()
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(*out, append(b, '\n'), 0o644)
+		}
+	}
 	rec, err := run.Classify(context.Background(), o, gh.New(o.Repo, token))
 	if err != nil {
 		return err
 	}
 	if rec == nil {
 		return nil
-	}
-	b, err := rec.Marshal()
-	if err != nil {
-		return err
-	}
-	if *out != "" {
-		if err := os.WriteFile(*out, append(b, '\n'), 0o644); err != nil {
-			return fmt.Errorf("writing AI record: %w", err)
-		}
 	}
 	reason := "-"
 	if rec.SkipReason != nil {

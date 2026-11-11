@@ -19,6 +19,8 @@ type Fake struct {
 	CommitsErr   error
 	RemoveErr    error
 	CheckErr     error
+	PRErr        error
+	FilesErr     error
 	DiffText     string
 	DiffErr      error
 	Existing     []gh.CheckRunInfo
@@ -28,8 +30,8 @@ type Fake struct {
 	Checks  []gh.CheckRun
 }
 
-func (f *Fake) PullRequest(context.Context, int) (gh.PullRequest, error) { return f.PR, nil }
-func (f *Fake) Files(context.Context, int) ([]gh.File, error)            { return f.FileList, nil }
+func (f *Fake) PullRequest(context.Context, int) (gh.PullRequest, error) { return f.PR, f.PRErr }
+func (f *Fake) Files(context.Context, int) ([]gh.File, error)            { return f.FileList, f.FilesErr }
 
 func (f *Fake) AuthorCommits(_ context.Context, _, _ string, since time.Time, max int) (int, error) {
 	if f.CommitsErr != nil {

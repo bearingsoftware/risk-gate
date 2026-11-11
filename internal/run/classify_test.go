@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -88,7 +89,7 @@ func setup(t *testing.T, lane string) (ClassifyOptions, *ghfake.Fake) {
 		t.Fatal(err)
 	}
 	o := ClassifyOptions{
-		Repo: "o/r", PR: 7, DecisionPath: dp, TiersPath: tp, Publish: true, RunID: 5, RunAttempt: 1,
+		Repo: "bearingsoftware/secure-repo", PR: 1302, DecisionPath: dp, TiersPath: tp, Publish: true, RunID: 5, RunAttempt: 1,
 		Event: "pull_request", EventAction: "opened",
 		Now: func() time.Time { return time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC) },
 		Log: log.New(io.Discard, "", 0),
@@ -277,8 +278,9 @@ func TestClassifyReadOnlyTokenIsNotAnError(t *testing.T) {
 		t.Fatal(err)
 	}
 	g.CheckErr = &gh.StatusError{Method: "POST", Path: "/x", Status: http.StatusInternalServerError}
-	if _, err := Classify(context.Background(), o, g); err == nil {
-		t.Fatal("a 500 from GitHub must fail the run")
+	rec, err := Classify(context.Background(), o, g)
+	if err != nil || rec == nil {
+		t.Fatalf("a 500 from GitHub must not fail the run: %v %v", rec, err)
 	}
 }
 
@@ -313,5 +315,90 @@ func TestClassifyInputsReachTheModel(t *testing.T) {
 	}
 	if strings.Contains(api.user, `"files"`) {
 		t.Error("decision files list should be dropped from the decision section")
+	}
+}
+
+func TestClassifyStaleHeadMakesNoCallAndNoRecord(t *testing.T) {
+	t.Parallel()
+	o, g := setup(t, "human")
+	g.PR.HeadSHA = strings.Repeat("e", 40)
+	api := &stubAPI{resp: okResp()}
+	o.API = api
+	rec, err := Classify(context.Background(), o, g)
+	if err != nil || rec != nil || api.calls != 0 || len(g.Checks) != 0 {
+		t.Fatalf("rec %v err %v calls %d checks %d", rec, err, api.calls, len(g.Checks))
+	}
+}
+
+func TestClassifyDedupeIsPerRepoAndPR(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, from, to string }{
+		{"other pr", `"pr":1302`, `"pr":99`},
+		{"other repo", `bearingsoftware/secure-repo`, `bearingsoftware/other`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			o, g := setup(t, "human")
+			g.Existing = []gh.CheckRunInfo{{Name: "risk-gate-ai", AppSlug: "github-actions", Text: strings.Replace(classifiedText(t, headSHA), tc.from, tc.to, 1)}}
+			api := &stubAPI{resp: okResp()}
+			o.API = api
+			rec, err := Classify(context.Background(), o, g)
+			if err != nil || rec == nil || api.calls != 1 || len(g.Checks) != 1 {
+				t.Fatalf("rec %v err %v calls %d checks %d", rec, err, api.calls, len(g.Checks))
+			}
+		})
+	}
+	o, g := setup(t, "human")
+	_ = o
+	g.Existing = []gh.CheckRunInfo{{Name: "risk-gate-ai", AppSlug: "github-actions", Text: classifiedText(t, headSHA)}}
+	if rec, err := Classify(context.Background(), o, g); err != nil || rec != nil || len(g.Checks) != 0 {
+		t.Fatalf("same repo and pr must dedupe: %v %v", rec, err)
+	}
+}
+
+func TestClassifyDataFailuresNeverFail(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		break_ func(o *ClassifyOptions, g *ghfake.Fake)
+	}{
+		{"pull request fetch", func(o *ClassifyOptions, g *ghfake.Fake) { g.PRErr = errors.New("boom") }},
+		{"files fetch", func(o *ClassifyOptions, g *ghfake.Fake) { g.FilesErr = errors.New("boom") }},
+		{"missing decision", func(o *ClassifyOptions, g *ghfake.Fake) { o.DecisionPath += ".nope" }},
+		{"garbage decision", func(o *ClassifyOptions, g *ghfake.Fake) {
+			if err := os.WriteFile(o.DecisionPath, []byte("{"), 0o644); err != nil {
+				panic(err)
+			}
+		}},
+		{"missing tiers", func(o *ClassifyOptions, g *ghfake.Fake) { o.TiersPath += ".nope" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			o, g := setup(t, "human")
+			api := &stubAPI{resp: okResp()}
+			o.API = api
+			tc.break_(&o, g)
+			rec, err := Classify(context.Background(), o, g)
+			if err != nil || rec != nil || api.calls != 0 || len(g.Checks) != 0 {
+				t.Fatalf("rec %v err %v calls %d checks %d", rec, err, api.calls, len(g.Checks))
+			}
+		})
+	}
+}
+
+func TestClassifyWritesOutBeforePublishAndSurvivesPublishFailure(t *testing.T) {
+	t.Parallel()
+	o, g := setup(t, "human")
+	g.CheckErr = &gh.StatusError{Method: "POST", Path: "/x", Status: http.StatusInternalServerError}
+	var written []decision.AIRecord
+	o.Write = func(r decision.AIRecord) error { written = append(written, r); return nil }
+	rec, err := Classify(context.Background(), o, g)
+	if err != nil || rec == nil || len(written) != 1 || written[0].Status != decision.AISkipped {
+		t.Fatalf("rec %v err %v written %d", rec, err, len(written))
+	}
+	o.Write = func(decision.AIRecord) error { return fmt.Errorf("disk full") }
+	if rec, err := Classify(context.Background(), o, g); err != nil || rec == nil {
+		t.Fatalf("a failed --out write must not fail the run: %v %v", rec, err)
 	}
 }

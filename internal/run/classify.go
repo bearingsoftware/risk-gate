@@ -45,27 +45,34 @@ type ClassifyOptions struct {
 	EventAction  string
 	// API is nil when there is no key.
 	API classify.API
-	Now func() time.Time
-	Log *log.Logger
+	// Write receives the record before it is published; a failure is logged, never fatal.
+	Write func(decision.AIRecord) error
+	Now   func() time.Time
+	Log   *log.Logger
 }
 
 // Classify records one AI benchmark for the PR head. It returns nil when nothing was recorded:
-// a fork, or a head that already has a classified record.
+// a moved head, a failed GitHub or file read, or a head that already has a classified record.
+// Only misuse (an unsupported event) is an error.
 func Classify(ctx context.Context, o ClassifyOptions, g ClassifyGitHub) (*decision.AIRecord, error) {
+	soft := func(err error) (*decision.AIRecord, error) {
+		o.Log.Printf("::warning::AI benchmark not recorded: %v", err)
+		return nil, nil
+	}
 	detData, err := os.ReadFile(o.DecisionPath)
 	if err != nil {
-		return nil, fmt.Errorf("reading decision: %w", err)
+		return soft(fmt.Errorf("reading decision: %w", err))
 	}
 	var det decision.Record
 	if err := json.Unmarshal(detData, &det); err != nil {
-		return nil, fmt.Errorf("parsing decision: %w", err)
+		return soft(fmt.Errorf("parsing decision: %w", err))
 	}
 	if det.Schema != decision.Schema {
-		return nil, fmt.Errorf("decision schema %q, want %q", det.Schema, decision.Schema)
+		return soft(fmt.Errorf("decision schema %q, want %q", det.Schema, decision.Schema))
 	}
 	tiersData, err := os.ReadFile(o.TiersPath)
 	if err != nil {
-		return nil, fmt.Errorf("reading tiers file: %w", err)
+		return soft(fmt.Errorf("reading tiers file: %w", err))
 	}
 	event, err := normaliseEvent(o.Event)
 	if err != nil {
@@ -77,7 +84,11 @@ func Classify(ctx context.Context, o ClassifyOptions, g ClassifyGitHub) (*decisi
 	}
 	pr, err := g.PullRequest(ctx, o.PR)
 	if err != nil {
-		return nil, fmt.Errorf("fetching pull request: %w", err)
+		return soft(fmt.Errorf("fetching pull request: %w", err))
+	}
+	if det.HeadSHA != pr.HeadSHA {
+		o.Log.Printf("::notice::head moved (scored %s, now %s), a newer run classifies", det.HeadSHA, pr.HeadSHA)
+		return nil, nil
 	}
 
 	rec := decision.AIRecord{
@@ -107,7 +118,7 @@ func Classify(ctx context.Context, o ClassifyOptions, g ClassifyGitHub) (*decisi
 	default:
 		in, err := classifyInput(ctx, g, o, pr, tiersData, detData)
 		if err != nil {
-			return nil, err
+			return soft(err)
 		}
 		out := classify.Classify(ctx, o.API, prompt, in, o.Log)
 		rec.AI, rec.Usage, rec.CostUSD, rec.LatencyMS, rec.DiffTruncated = out.AI, out.Usage, out.CostUSD, out.LatencyMS, out.DiffTruncated
@@ -119,7 +130,13 @@ func Classify(ctx context.Context, o ClassifyOptions, g ClassifyGitHub) (*decisi
 			skip(out.SkipReason)
 		}
 	}
-	return &rec, publishAI(ctx, g, o, rec)
+	if o.Write != nil {
+		if err := o.Write(rec); err != nil {
+			o.Log.Printf("::warning::AI record not written: %v", err)
+		}
+	}
+	publishAI(ctx, g, o, rec)
+	return &rec, nil
 }
 
 func classified(ctx context.Context, g ClassifyGitHub, o ClassifyOptions, sha string) bool {
@@ -132,7 +149,8 @@ func classified(ctx context.Context, g ClassifyGitHub, o ClassifyOptions, sha st
 		if r.AppSlug != aiPublisher {
 			continue
 		}
-		if prev, ok := decision.ParseAICheckText(r.Text); ok && prev.Status == decision.AIClassified && prev.HeadSHA == sha {
+		if prev, ok := decision.ParseAICheckText(r.Text); ok && prev.Status == decision.AIClassified &&
+			prev.HeadSHA == sha && prev.Repo == o.Repo && prev.PR == o.PR {
 			return true
 		}
 	}
@@ -172,13 +190,14 @@ func slimDecision(b []byte) []byte {
 	return out
 }
 
-func publishAI(ctx context.Context, g ClassifyGitHub, o ClassifyOptions, rec decision.AIRecord) error {
+func publishAI(ctx context.Context, g ClassifyGitHub, o ClassifyOptions, rec decision.AIRecord) {
 	if !o.Publish {
-		return nil
+		return
 	}
 	b, err := rec.Marshal()
 	if err != nil {
-		return err
+		o.Log.Printf("::warning::AI check run not published: %v", err)
+		return
 	}
 	err = g.CreateCheckRun(ctx, gh.CheckRun{
 		Name: aiCheckName, HeadSHA: rec.HeadSHA, Conclusion: "neutral",
@@ -187,10 +206,9 @@ func publishAI(ctx context.Context, g ClassifyGitHub, o ClassifyOptions, rec dec
 	var se *gh.StatusError
 	if errors.As(err, &se) && se.Status == http.StatusForbidden {
 		o.Log.Printf("::warning::read-only token, AI check run skipped: %v", err)
-		return nil
+		return
 	}
 	if err != nil {
-		return fmt.Errorf("publishing AI check run: %w", err)
+		o.Log.Printf("::warning::AI check run not published: %v", err)
 	}
-	return nil
 }
