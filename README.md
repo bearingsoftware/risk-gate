@@ -21,10 +21,10 @@ on:
     branches: [main]
   pull_request_review:
     types: [submitted, dismissed]
-    branches: [main]
 permissions: {}
 jobs:
   risk-gate:
+    if: github.event.pull_request.base.ref == 'main'
     permissions: {contents: read, pull-requests: write, checks: write}
     uses: bearingsoftware/risk-gate/.github/workflows/risk-gate.yml@<sha> # main
     with:
@@ -32,7 +32,7 @@ jobs:
       runs-on: '["ubuntu-latest"]'
 ```
 
-The caller needs `.github/review-tiers.yml`. Optional inputs: `mode` (`shadow`), `weights-version` (`"2"`).
+`pull_request_review` has no `branches` filter, so filter in the job. The caller needs `.github/review-tiers.yml`. Optional inputs: `mode` (`shadow`), `weights-version` (`"2"`).
 The job sets one `risk:tier-N` label and publishes the `risk-gate` check; on fork PRs it does neither.
 Locally, `risk-gate score --weights-version N` uses the embedded `weights/vN.yml`; `--weights <path>` wins.
 
