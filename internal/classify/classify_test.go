@@ -261,6 +261,31 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+func TestWireSchemaDropsUnsupportedKeywords(t *testing.T) {
+	t.Parallel()
+	p, err := prompts.LoadClassifier("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := WireSchema(p.Schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range unsupportedByAPI {
+		if strings.Contains(string(b), `"`+k+`"`) {
+			t.Errorf("wire schema still has %s", k)
+		}
+	}
+	for _, k := range []string{`"enum"`, `"required"`, `"additionalProperties":false`, `"type"`} {
+		if !strings.Contains(string(b), k) {
+			t.Errorf("wire schema lost %s", k)
+		}
+	}
+	if !strings.Contains(string(p.Schema), `"maxLength"`) {
+		t.Error("local schema must keep its constraints")
+	}
+}
+
 func TestClassifyRequestShape(t *testing.T) {
 	t.Parallel()
 	p, err := prompts.LoadClassifier("v1")
@@ -286,6 +311,9 @@ func TestClassifyRequestShape(t *testing.T) {
 	}
 	oc, _ := got["output_config"].(map[string]any)
 	format, _ := oc["format"].(map[string]any)
+	if raw, _ := json.Marshal(format["schema"]); strings.Contains(string(raw), "maxLength") || strings.Contains(string(raw), "minItems") {
+		t.Errorf("wire schema carries unsupported keywords: %s", raw)
+	}
 	if oc["effort"] != "low" || format["type"] != "json_schema" || format["schema"] == nil {
 		t.Errorf("output_config %v", oc)
 	}

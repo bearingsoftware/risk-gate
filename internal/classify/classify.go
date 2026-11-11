@@ -107,7 +107,13 @@ func Classify(ctx context.Context, api API, p prompts.Classifier, in Input, lg *
 	out := Outcome{DiffTruncated: truncated}
 
 	start := time.Now()
-	resp, err := api.Call(ctx, string(p.System), user, p.Schema)
+	wire, err := WireSchema(p.Schema)
+	if err != nil {
+		lg.Printf("::warning::wire schema: %v", err)
+		out.SkipReason = decision.SkipAPIError
+		return out
+	}
+	resp, err := api.Call(ctx, string(p.System), user, wire)
 	ms := time.Since(start).Milliseconds()
 	if err != nil {
 		var ae *APIError
@@ -183,4 +189,37 @@ func parse(p prompts.Classifier, text string) (*decision.AIResult, error) {
 		r.SecurityConcerns = []string{}
 	}
 	return &r, nil
+}
+
+// unsupportedByAPI are the keywords structured outputs rejects; the local schema keeps them for validation.
+var unsupportedByAPI = []string{"minimum", "maximum", "multipleOf", "exclusiveMinimum", "exclusiveMaximum", "minLength", "maxLength", "minItems", "maxItems"}
+
+// WireSchema is the local schema without the keywords the API does not support.
+func WireSchema(local []byte) ([]byte, error) {
+	var v any
+	if err := json.Unmarshal(local, &v); err != nil {
+		return nil, fmt.Errorf("decoding schema: %w", err)
+	}
+	var strip func(any)
+	strip = func(n any) {
+		switch t := n.(type) {
+		case map[string]any:
+			for _, k := range unsupportedByAPI {
+				delete(t, k)
+			}
+			for _, c := range t {
+				strip(c)
+			}
+		case []any:
+			for _, c := range t {
+				strip(c)
+			}
+		}
+	}
+	strip(v)
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("encoding schema: %w", err)
+	}
+	return b, nil
 }
