@@ -66,6 +66,7 @@ review tier next to the deterministic one. It is never used by the gate.
   `skipped` rows may precede it; take the first `classified`, else the latest skip.
 - A skip is a row, not an absence: `status = "skipped"` with `skip_reason` one of `no_key`,
   `not_human_lane`, `fork`, `refusal`, `truncated`, `parse_error`, `credit_or_limit`, `api_error`.
+  `api_error` also covers a failed GitHub read of the PR or its files during classify.
   `ai`, `usage`, `cost_usd`, `latency_ms` and `model_used` are `null` when there was nothing to record.
   Fork PRs write no check run (read-only token); the `risk-ai` artifact is still written.
 - Human lane only. `det_tier`, `weights_version` and `lane` are copied from the decision record.
