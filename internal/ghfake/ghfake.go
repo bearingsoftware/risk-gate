@@ -19,14 +19,19 @@ type Fake struct {
 	CommitsErr   error
 	RemoveErr    error
 	CheckErr     error
+	PRErr        error
+	FilesErr     error
+	DiffText     string
+	DiffErr      error
+	Existing     []gh.CheckRunInfo
 
 	Removed []string
 	Added   []string
 	Checks  []gh.CheckRun
 }
 
-func (f *Fake) PullRequest(context.Context, int) (gh.PullRequest, error) { return f.PR, nil }
-func (f *Fake) Files(context.Context, int) ([]gh.File, error)            { return f.FileList, nil }
+func (f *Fake) PullRequest(context.Context, int) (gh.PullRequest, error) { return f.PR, f.PRErr }
+func (f *Fake) Files(context.Context, int) ([]gh.File, error)            { return f.FileList, f.FilesErr }
 
 func (f *Fake) AuthorCommits(_ context.Context, _, _ string, since time.Time, max int) (int, error) {
 	if f.CommitsErr != nil {
@@ -74,4 +79,16 @@ func (f *Fake) LatestForcePush(context.Context, int) (time.Time, bool, error) {
 		return time.Time{}, false, nil
 	}
 	return *f.ForcePush, true, nil
+}
+
+func (f *Fake) Diff(context.Context, int) (string, error) { return f.DiffText, f.DiffErr }
+
+func (f *Fake) CheckRuns(_ context.Context, _, name string) ([]gh.CheckRunInfo, error) {
+	var out []gh.CheckRunInfo
+	for _, c := range f.Existing {
+		if c.Name == name {
+			out = append(out, c)
+		}
+	}
+	return out, nil
 }

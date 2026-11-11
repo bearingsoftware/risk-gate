@@ -136,6 +136,14 @@ func retryDelay(resp *http.Response, attempt int) (time.Duration, bool) {
 const maxRetryWait = 60 * time.Second
 
 func (c *Client) do(ctx context.Context, method, p string, body, out any) error {
+	var decode func(io.Reader) error
+	if out != nil {
+		decode = func(r io.Reader) error { return json.NewDecoder(r).Decode(out) }
+	}
+	return c.doAccept(ctx, method, p, "application/vnd.github+json", body, decode)
+}
+
+func (c *Client) doAccept(ctx context.Context, method, p, accept string, body any, decode func(io.Reader) error) error {
 	var payload []byte
 	if body != nil {
 		var err error
@@ -153,7 +161,7 @@ func (c *Client) do(ctx context.Context, method, p string, body, out any) error 
 		if err != nil {
 			return fmt.Errorf("building request: %w", err)
 		}
-		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("Accept", accept)
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 		if c.Token != "" {
 			req.Header.Set("Authorization", "Bearer "+c.Token)
@@ -172,10 +180,10 @@ func (c *Client) do(ctx context.Context, method, p string, body, out any) error 
 			wait = time.Duration(1<<attempt) * time.Second
 		case resp.StatusCode >= 200 && resp.StatusCode <= 299:
 			defer resp.Body.Close()
-			if out == nil {
+			if decode == nil {
 				return nil
 			}
-			if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			if err := decode(resp.Body); err != nil {
 				return fmt.Errorf("decoding github %s %s: %w", method, p, err)
 			}
 			return nil
@@ -432,4 +440,57 @@ func (c *Client) LatestForcePush(ctx context.Context, n int) (time.Time, bool, e
 		}
 	}
 	return latest, found, nil
+}
+
+// maxDiffBytes bounds what Diff reads; callers cap far lower.
+const maxDiffBytes = 1 << 20
+
+// Diff is the start of the PR's unified diff, at most 1 MiB.
+func (c *Client) Diff(ctx context.Context, n int) (string, error) {
+	var out []byte
+	err := c.doAccept(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/pulls/%d", c.Repo, n), "application/vnd.github.diff", nil, func(r io.Reader) error {
+		var err error
+		out, err = io.ReadAll(io.LimitReader(r, maxDiffBytes))
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// CheckRunInfo is an existing check run as the dedupe check needs it.
+type CheckRunInfo struct {
+	Name    string
+	AppSlug string
+	Text    string
+}
+
+// CheckRuns lists every check run named name on sha, including superseded ones.
+func (c *Client) CheckRuns(ctx context.Context, sha, name string) ([]CheckRunInfo, error) {
+	var all []CheckRunInfo
+	for page := 1; page <= maxFilePages; page++ {
+		var raw struct {
+			CheckRuns []struct {
+				Name string `json:"name"`
+				App  struct {
+					Slug string `json:"slug"`
+				} `json:"app"`
+				Output struct {
+					Text string `json:"text"`
+				} `json:"output"`
+			} `json:"check_runs"`
+		}
+		q := url.Values{"check_name": {name}, "filter": {"all"}, "per_page": {fmt.Sprint(perPage)}, "page": {fmt.Sprint(page)}}
+		if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/commits/%s/check-runs?%s", c.Repo, sha, q.Encode()), nil, &raw); err != nil {
+			return nil, err
+		}
+		for _, r := range raw.CheckRuns {
+			all = append(all, CheckRunInfo{Name: r.Name, AppSlug: r.App.Slug, Text: r.Output.Text})
+		}
+		if len(raw.CheckRuns) < perPage {
+			break
+		}
+	}
+	return all, nil
 }

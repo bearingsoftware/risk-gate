@@ -122,3 +122,25 @@ func TestWeightsFlagPrecedence(t *testing.T) {
 		}
 	}
 }
+
+func TestClassifyArgErrors(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		args []string
+		env  map[string]string
+	}{
+		{"no flags", []string{"classify"}, nil},
+		{"no decision", []string{"classify", "--repo", "o/r", "--pr", "1"}, nil},
+		{"no token", []string{"classify", "--repo", "o/r", "--pr", "1", "--decision", "d.json"}, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var out, errb bytes.Buffer
+			if code := execute(tc.args, &out, &errb, func(k string) string { return tc.env[k] }); code != 1 {
+				t.Fatalf("exit %d (%s)", code, errb.String())
+			}
+		})
+	}
+}

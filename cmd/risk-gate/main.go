@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/bearingsoftware/risk-gate/internal/classify"
+	"github.com/bearingsoftware/risk-gate/internal/decision"
 	"github.com/bearingsoftware/risk-gate/internal/gh"
 	"github.com/bearingsoftware/risk-gate/internal/run"
 	"github.com/bearingsoftware/risk-gate/internal/tiers"
@@ -22,13 +24,15 @@ func main() {
 
 func execute(args []string, stdout, stderr io.Writer, getenv func(string) string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: risk-gate score|lint-tiers [flags]")
+		fmt.Fprintln(stderr, "usage: risk-gate score|classify|lint-tiers [flags]")
 		return 2
 	}
 	var err error
 	switch args[0] {
 	case "score":
 		err = score(args[1:], stdout, stderr, getenv)
+	case "classify":
+		err = classifyCmd(args[1:], stdout, stderr, getenv)
 	case "lint-tiers":
 		err = lintTiers(args[1:], stdout)
 	default:
@@ -142,6 +146,65 @@ func score(args []string, stdout, stderr io.Writer, getenv func(string) string) 
 		}
 	}
 	fmt.Fprintf(stdout, "tier %d (path %d, score %d, lane %s, conclusion %s)\n", rec.DetTier, rec.PathTier, rec.Score, rec.Lane, rec.Check.Conclusion)
+	return nil
+}
+
+func classifyCmd(args []string, stdout, stderr io.Writer, getenv func(string) string) error {
+	fs := flag.NewFlagSet("classify", flag.ContinueOnError)
+	var o run.ClassifyOptions
+	fs.StringVar(&o.Repo, "repo", "", "owner/name")
+	fs.IntVar(&o.PR, "pr", 0, "pull request number")
+	fs.StringVar(&o.DecisionPath, "decision", "", "decision JSON written by score")
+	fs.StringVar(&o.TiersPath, "tiers", ".github/review-tiers.yml", "tiers file")
+	out := fs.String("out", "", "write the AI record JSON here")
+	fs.BoolVar(&o.Publish, "publish", false, "create the risk-gate-ai check run")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if o.Repo == "" || o.PR < 1 || o.DecisionPath == "" {
+		return fmt.Errorf("--repo, --pr and --decision are required")
+	}
+	token := getenv("GITHUB_TOKEN")
+	if token == "" {
+		return fmt.Errorf("GITHUB_TOKEN is not set")
+	}
+	if key := getenv("ANTHROPIC_API_KEY"); key != "" {
+		o.API = classify.NewAnthropic(key)
+	}
+	o.RunID, _ = strconv.ParseInt(getenv("GITHUB_RUN_ID"), 10, 64)
+	o.RunAttempt, _ = strconv.Atoi(getenv("GITHUB_RUN_ATTEMPT"))
+	o.Event = getenv("GITHUB_EVENT_NAME")
+	if p := getenv("GITHUB_EVENT_PATH"); p != "" {
+		action, err := eventAction(p)
+		if err != nil {
+			return err
+		}
+		o.EventAction = action
+	}
+	o.Now = time.Now
+	o.Log = log.New(stderr, "", 0)
+
+	if *out != "" {
+		o.Write = func(rec decision.AIRecord) error {
+			b, err := rec.Marshal()
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(*out, append(b, '\n'), 0o644)
+		}
+	}
+	rec, err := run.Classify(context.Background(), o, gh.New(o.Repo, token))
+	if err != nil {
+		return err
+	}
+	if rec == nil {
+		return nil
+	}
+	reason := "-"
+	if rec.SkipReason != nil {
+		reason = *rec.SkipReason
+	}
+	fmt.Fprintf(stdout, "ai %s (skip reason %s)\n", rec.Status, reason)
 	return nil
 }
 
