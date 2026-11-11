@@ -507,3 +507,66 @@ func TestTier2BeatsBotManifestAndTier0(t *testing.T) {
 		}
 	}
 }
+
+func TestDepManifestFloorByWeights(t *testing.T) {
+	t.Parallel()
+	v1, v2 := loadWeights(t, "../../weights/v1.yml"), loadWeights(t, "../../weights/v2.yml")
+	tests := []struct {
+		name    string
+		files   []File
+		v1Floor bool
+		v2Floor bool
+	}{
+		{"yarn.lock alone", []File{lines("yarn.lock", 1)}, true, false},
+		{"go.sum and pnpm lock", []File{lines("go.sum", 1), lines("web/pnpm-lock.yaml", 1)}, true, false},
+		{"go.mod", []File{lines("go.mod", 1)}, true, true},
+		{"package.json with lockfile", []File{lines("web/package.json", 1), lines("web/yarn.lock", 1)}, true, true},
+		{"package.json renamed to yarn.lock", []File{{Path: "yarn.lock", PreviousPath: "package.json", Status: "renamed", Additions: 1}}, true, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, c := range []struct {
+				label string
+				w     *Weights
+				want  bool
+			}{{"v1", v1, tc.v1Floor}, {"v2", v2, tc.v2Floor}} {
+				in := base(t)
+				in.Files = tc.files
+				in.Weights = c.w
+				if got := slices.Contains(floorRules(Evaluate(in)), "dep_manifest_human"); got != c.want {
+					t.Errorf("%s dep_manifest_human = %v, want %v", c.label, got, c.want)
+				}
+			}
+		})
+	}
+}
+
+func TestMappingV2Threshold(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		weights   string
+		hotFiles  int
+		wantScore int
+		wantTier  int
+	}{
+		{"v2 score 5 is tier 1", "../../weights/v2.yml", 0, 5, 1},
+		{"v2 score 6 is tier 2", "../../weights/v2.yml", 1, 6, 2},
+		{"v1 score 6 is tier 2", "../../weights/v1.yml", 1, 6, 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			in := base(t)
+			in.Files = []File{lines("src/a.go", 600), lines("src/a_test.go", 1)}
+			in.Labels = []string{"bug"}
+			in.HotFiles = ptr(tc.hotFiles)
+			in.Weights = loadWeights(t, tc.weights)
+			r := Evaluate(in)
+			if r.Score != tc.wantScore || r.DetTier != tc.wantTier {
+				t.Fatalf("score %d tier %d, want %d / %d", r.Score, r.DetTier, tc.wantScore, tc.wantTier)
+			}
+		})
+	}
+}

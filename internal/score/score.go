@@ -60,6 +60,10 @@ var depManifests = map[string]bool{
 	"package-lock.json": true, "pnpm-lock.yaml": true, "yarn.lock": true,
 }
 
+var lockfiles = map[string]bool{
+	"go.sum": true, "package-lock.json": true, "pnpm-lock.yaml": true, "yarn.lock": true,
+}
+
 var testDirs = []string{"__tests__", "__component_tests__", "__e2e_tests__", "__integration_tests__", "tests"}
 
 var fixTitle = regexp.MustCompile(`^fix(\([^)]*\))?!?:`)
@@ -74,6 +78,10 @@ func isControl(p string) bool {
 }
 
 func isManifest(p string) bool { return depManifests[path.Base(p)] }
+
+func isLockfile(p string) bool { return lockfiles[path.Base(p)] }
+
+func isCodeManifest(p string) bool { return isManifest(p) && !isLockfile(p) }
 
 func isTest(p string) bool {
 	base := path.Base(p)
@@ -114,7 +122,7 @@ func Evaluate(in Input) Result {
 		Files:  make([]decision.File, 0, len(in.Files)),
 	}
 	dirs := map[string]bool{}
-	var tier2Path, control, manifest string
+	var tier2Path, control, manifest, floorManifest string
 	allTier0OrManifest := len(in.Files) > 0
 	allTier0 := len(in.Files) > 0
 
@@ -141,6 +149,13 @@ func Evaluate(in Input) Result {
 		man := isManifest(f.Path) || (f.PreviousPath != "" && isManifest(f.PreviousPath))
 		if man && manifest == "" {
 			manifest = f.Path
+		}
+		floorMan := man
+		if !w.lockfilesFloor() {
+			floorMan = isCodeManifest(f.Path) || (f.PreviousPath != "" && isCodeManifest(f.PreviousPath))
+		}
+		if floorMan && floorManifest == "" {
+			floorManifest = f.Path
 		}
 		if tier != 0 {
 			allTier0 = false
@@ -199,8 +214,8 @@ func Evaluate(in Input) Result {
 	if in.SastNewHigh != nil && *in.SastNewHigh > 0 {
 		floor("sast_new_high", 2, "")
 	}
-	if manifest != "" && !in.AuthorBot {
-		floor("dep_manifest_human", 2, manifest)
+	if floorManifest != "" && !in.AuthorBot {
+		floor("dep_manifest_human", 2, floorManifest)
 	}
 	if in.APIBreak != nil && *in.APIBreak {
 		floor("api_break", 2, "")
