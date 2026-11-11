@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tier", "confidence", "reasons", "security_concerns"],
+  "properties": {
+    "tier": {"type": "integer", "enum": [0, 1, 2]},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "reasons": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": {"type": "string", "maxLength": 200}
+    },
+    "security_concerns": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 5,
+      "items": {"type": "string", "maxLength": 200}
+    }
+  }
+}

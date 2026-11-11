@@ -437,3 +437,57 @@ func TestPullRequestFork(t *testing.T) {
 		}
 	}
 }
+
+func TestDiffAsksForTheDiffMediaType(t *testing.T) {
+	t.Parallel()
+	c, rec := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Accept") != "application/vnd.github.diff" {
+			t.Errorf("accept = %q", r.Header.Get("Accept"))
+		}
+		io.WriteString(w, "diff --git a/x b/x\n+y\n")
+	})
+	got, err := c.Diff(context.Background(), 7)
+	if err != nil || got != "diff --git a/x b/x\n+y\n" {
+		t.Fatalf("got %q %v", got, err)
+	}
+	if len(rec.reqs) != 1 || rec.reqs[0] != "GET /repos/o/r/pulls/7" {
+		t.Fatalf("requests %v", rec.reqs)
+	}
+}
+
+func TestDiffIsBounded(t *testing.T) {
+	t.Parallel()
+	c, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, strings.Repeat("x", maxDiffBytes+500))
+	})
+	got, err := c.Diff(context.Background(), 7)
+	if err != nil || len(got) != maxDiffBytes {
+		t.Fatalf("len %d %v", len(got), err)
+	}
+}
+
+func TestCheckRunsPaginatesAndKeepsSuperseded(t *testing.T) {
+	t.Parallel()
+	c, rec := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("check_name") != "risk-gate-ai" || q.Get("filter") != "all" {
+			t.Errorf("query %v", q)
+		}
+		n := 100
+		if q.Get("page") == "2" {
+			n = 1
+		}
+		runs := make([]map[string]any, n)
+		for i := range runs {
+			runs[i] = map[string]any{"name": "risk-gate-ai", "app": map[string]string{"slug": "github-actions"}, "output": map[string]string{"text": fmt.Sprintf("t%d", i)}}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"check_runs": runs})
+	})
+	got, err := c.CheckRuns(context.Background(), "abc", "risk-gate-ai")
+	if err != nil || len(got) != 101 || got[0].AppSlug != "github-actions" || got[0].Text != "t0" {
+		t.Fatalf("got %d %v %+v", len(got), err, got[0])
+	}
+	if len(rec.reqs) != 2 || !strings.HasPrefix(rec.reqs[0], "GET /repos/o/r/commits/abc/check-runs?") {
+		t.Fatalf("requests %v", rec.reqs)
+	}
+}

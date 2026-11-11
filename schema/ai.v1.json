@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bearingsoftware/risk-gate/schema/ai.v1.json",
+  "title": "risk-gate AI benchmark record v1",
+  "type": "object",
+  "required": [
+    "schema", "repo", "pr", "base_sha", "head_sha", "run", "status", "skip_reason",
+    "prompt_version", "prompt_sha256", "model_requested", "model_used", "det_tier",
+    "weights_version", "lane", "ai", "usage", "cost_usd", "latency_ms", "diff_truncated"
+  ],
+  "properties": {
+    "schema": {"const": "risk-gate.ai/v1"},
+    "repo": {"type": "string", "pattern": "^[^/]+/[^/]+$"},
+    "pr": {"type": "integer", "minimum": 1},
+    "base_sha": {"$ref": "#/$defs/sha"},
+    "head_sha": {"$ref": "#/$defs/sha"},
+    "run": {
+      "type": "object",
+      "required": ["id", "attempt", "event", "at"],
+      "properties": {
+        "id": {"type": "integer", "minimum": 0},
+        "attempt": {"type": "integer", "minimum": 1},
+        "event": {"enum": ["pull_request", "pull_request_review", "workflow_dispatch"]},
+        "action": {"type": "string"},
+        "at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "status": {"enum": ["classified", "skipped"]},
+    "skip_reason": {
+      "oneOf": [
+        {"type": "null"},
+        {"enum": ["no_key", "not_human_lane", "fork", "refusal", "truncated", "parse_error", "credit_or_limit", "api_error"]}
+      ]
+    },
+    "prompt_version": {"type": "string", "minLength": 1},
+    "prompt_sha256": {"$ref": "#/$defs/sha256"},
+    "model_requested": {"type": "string", "minLength": 1},
+    "model_used": {"type": ["string", "null"]},
+    "det_tier": {"$ref": "#/$defs/tier"},
+    "weights_version": {"type": "string"},
+    "lane": {"enum": ["human", "bot", "release"]},
+    "ai": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tier", "confidence", "reasons", "security_concerns"],
+          "properties": {
+            "tier": {"$ref": "#/$defs/tier"},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "reasons": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "string", "maxLength": 200}},
+            "security_concerns": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 200}}
+          }
+        }
+      ]
+    },
+    "usage": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"],
+          "properties": {
+            "input_tokens": {"type": "integer", "minimum": 0},
+            "output_tokens": {"type": "integer", "minimum": 0},
+            "cache_read_input_tokens": {"type": "integer", "minimum": 0},
+            "cache_creation_input_tokens": {"type": "integer", "minimum": 0}
+          }
+        }
+      ]
+    },
+    "cost_usd": {"type": ["number", "null"], "minimum": 0},
+    "latency_ms": {"type": ["integer", "null"], "minimum": 0},
+    "diff_truncated": {"type": "boolean"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "classified"}}},
+      "then": {"properties": {"skip_reason": {"type": "null"}, "ai": {"type": "object"}}},
+      "else": {"properties": {"skip_reason": {"type": "string"}, "ai": {"type": "null"}}}
+    }
+  ],
+  "$defs": {
+    "tier": {"enum": [0, 1, 2]},
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
