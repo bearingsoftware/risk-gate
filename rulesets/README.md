@@ -59,7 +59,7 @@ until one of those lands.
 
 ## risk-gate as a required check (FINCH-529)
 
-Only `component-test-framework` requires `risk-gate`, and only from trial week 6 (22 Dec 2026),
+Only `component-test-framework` requires `risk-gate`, and only from trial week 3 (1 Dec 2026; timeline halved 11 Nov),
 together with `mode: enforce` in its caller (component-test-framework#77). `secure-repo` and
 `joule-genie` are recorded-only: they never require it.
 
@@ -96,7 +96,7 @@ publishes nothing on forks, so the required check never reports).
 
   Comment on FINCH-529 with the PR number and why. Each use counts against the trial.
 
-### Switch-on (22 Dec 2026)
+### Switch-on (1 Dec 2026)
 
 1. Merge this repo's change that adds `risk-gate` to `component-test-framework.json`.
 2. Mark component-test-framework#77 ready, merge it once green.
