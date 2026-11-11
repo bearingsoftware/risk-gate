@@ -22,7 +22,12 @@ type Weights struct {
 	HotFiles       HotFiles    `yaml:"hot_files"`
 	HotLookback    HotLookback `yaml:"hot_file_lookback"`
 	Mapping        TierMapping `yaml:"mapping"`
+	DepManifest    DepManifest `yaml:"dep_manifest"`
 	SHA256         string      `yaml:"-"`
+}
+
+type DepManifest struct {
+	LockfilesAloneFloor *bool `yaml:"lockfiles_alone_floor"`
 }
 
 type SizeBand struct {
@@ -78,6 +83,12 @@ func ParseWeights(data []byte) (*Weights, error) {
 	sum := sha256.Sum256(data)
 	w.SHA256 = hex.EncodeToString(sum[:])
 	return &w, nil
+}
+
+// lockfilesFloor reports whether a human PR changing only lockfiles trips dep_manifest_human.
+// Absent means it does, as in v1.
+func (w *Weights) lockfilesFloor() bool {
+	return w.DepManifest.LockfilesAloneFloor == nil || *w.DepManifest.LockfilesAloneFloor
 }
 
 func (w *Weights) sizePoints(lines int) int {
