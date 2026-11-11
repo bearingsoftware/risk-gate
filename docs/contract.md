@@ -52,11 +52,38 @@ One record per scoring run. A PR has many (every push, label, review event).
   never as an independent review.
 - Unknown extra fields: ignore. Missing required fields or another `schema` value: reject and log.
 
+## AI benchmark record (ai/v1)
+
+Version: **ai/v1** (`schema/ai.v1.json`, fixtures in `testdata/ai/`). A shadow benchmark of a model's
+review tier next to the deterministic one. It is never used by the gate.
+
+- Separate check run named exactly `risk-gate-ai`, conclusion `neutral`, on the PR head SHA. Title and
+  summary carry no tier. `output.text` is the marker line `<!-- risk-gate:ai v1 -->` then the first
+  ```` ```json ```` fence, the same shape as the decision record.
+- Publisher is pinned: accept only a check run whose `app.slug` is `github-actions`.
+- Key: `(repo, pr, head_sha)`, first classified wins. The job skips the call when a `classified` record by
+  `github-actions` already exists on the head SHA, so a re-run or label event adds nothing. Several
+  `skipped` rows may precede it; take the first `classified`, else the latest skip.
+- A skip is a row, not an absence: `status = "skipped"` with `skip_reason` one of `no_key`,
+  `not_human_lane`, `fork`, `refusal`, `truncated`, `parse_error`, `credit_or_limit`, `api_error`.
+  `ai`, `usage`, `cost_usd`, `latency_ms` and `model_used` are `null` when there was nothing to record.
+  Fork PRs write no check run (read-only token); the `risk-ai` artifact is still written.
+- Human lane only. `det_tier`, `weights_version` and `lane` are copied from the decision record.
+  `prompt_version` is the `prompts/classifier/<version>/` directory; `prompt_sha256` covers its
+  `system.md` and `schema.json`.
+- Model text is sanitised before it is stored (no control characters, backticks become `'`) and the
+  JSON is HTML-escaped, so a reason cannot close the fence or inject markup.
+- Consumers are the dataset and the benchmark view only. Nothing here feeds a tier, label or check
+  conclusion. Unknown extra fields: ignore.
+- The job never writes to the PR (no comments, labels or `pull-requests: write`). The record is also
+  uploaded as the workflow artifact `risk-ai` (14 days).
+
 ## Reusable workflow
 
 Consumers call `.github/workflows/risk-gate.yml` (`on: workflow_call`). Inputs: `runs-on` (JSON array of
 labels), `mode` (default `shadow`), `weights-version` (default `"2"`, embedded in the binary), `risk-gate-ref`
-(the commit SHA the caller pinned `uses:` to; the binary is installed from it). See the README.
+(the commit SHA the caller pinned `uses:` to; the binary is installed from it). Optional secret
+`anthropic-api-key` enables the AI benchmark; without it the `classify` job records a `no_key` skip. See the README.
 
 ## Changing the contract
 

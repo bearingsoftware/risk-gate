@@ -30,10 +30,13 @@ jobs:
     with:
       risk-gate-ref: <sha>
       runs-on: '["ubuntu-latest"]'
+    secrets:
+      anthropic-api-key: ${{ secrets.RISK_GATE_ANTHROPIC_API_KEY }}
 ```
 
 `pull_request_review` has no `branches` filter, so filter in the job. The caller needs `.github/review-tiers.yml`. Optional inputs: `mode` (`shadow`), `weights-version` (`"2"`).
 The job sets one `risk:tier-N` label and publishes the `risk-gate` check; on fork PRs it does neither.
+A second job, `classify`, records a shadow AI benchmark as the `risk-gate-ai` check run (`risk-gate classify`, see `docs/contract.md`); it needs `checks: write` only and never touches the PR.
 Locally, `risk-gate score --weights-version N` uses the embedded `weights/vN.yml`; `--weights <path>` wins.
 
 `baseline/2026-11-10.json` is the frozen pre-trial baseline (90 days of merged PRs).
