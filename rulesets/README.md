@@ -18,8 +18,8 @@ Repository rulesets for the three trial repos, kept as code. One body per repo i
   with the base before merge.
 - No bypass actors, so the maintainer cannot merge around a red check.
 
-Enforcement is `evaluate` by default: GitHub records what would have been blocked without
-blocking it. `--enforcement active` turns the rules on.
+Enforcement is `evaluate` by default in `apply.sh`: GitHub records what would have been blocked
+without blocking it. `--enforcement active` turns the rules on; all three repos run `active`.
 
 ## Why no approvals
 
@@ -40,22 +40,16 @@ PR would deadlock. The rules gate on automated checks only.
 - **component-test-framework** has no aggregate. All five jobs ran on the PR head of each of
   #69 to #73, all green, on `ubuntu-latest`.
 
-## Known gap: joule-genie PRs that path-filter out `ci.yml`
+## Closed gap: joule-genie PRs that path-filtered out `ci.yml`
 
-`ci.yml` has a `paths-ignore` for `android/**`, `corporate-site/**` and a few E2E and docs
-paths. A PR that touches only those files never starts `ci.yml`, so `ci-success` is never
-reported. A required check that never reports leaves the PR blocked, as Renovate's own gate
-already does for the same case (see the renovate-config README, "What it cannot see").
+`ci.yml` had a `pull_request` `paths-ignore` for `android/**`, `corporate-site/**` and some E2E and
+docs paths, so a PR touching only those never reported `ci-success` (#1879, #1880). joule-genie#1892
+(FINCH-524) removed it: `ci.yml` now runs on every PR, the `changes` filters skip the backend suites
+and `sibling-workflows` waits for the path-filtered workflows. Probe #1895 (one `docs/android-*.md`
+line) reported `ci-success` green with the suites skipped. The push trigger keeps its
+`paths-ignore`, which `merge-guard.py` reads.
 
-Evidence on develop:
-
-- #1880 (android-ci.yml only) and #1879 (corporate-site only) merged with no `ci-success`
-  check run on the PR head.
-
-This must be settled before `joule-genie` moves to `active`. Options, for the orchestrator to
-choose: drop the `paths-ignore` entries that exclude sibling-workflow-only PRs, or add a
-required check that every PR always reports. This ruleset is not safe to make `active`
-until one of those lands.
+All three rulesets are `active` since 2026-11-11.
 
 ## Code scanning: not included
 
