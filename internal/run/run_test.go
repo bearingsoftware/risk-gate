@@ -460,3 +460,31 @@ func TestForkPRSkipsWrites(t *testing.T) {
 		t.Fatalf("logs = %q", logs.String())
 	}
 }
+
+func TestPublishForbidden(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mode    string
+		wantErr bool
+	}{{"shadow", false}, {"enforce", true}} {
+		t.Run(tc.mode, func(t *testing.T) {
+			t.Parallel()
+			f := fake(nil, "auth/a.go")
+			f.CheckErr = &gh.StatusError{Method: "POST", Path: "/check-runs", Status: 403}
+			o := opts(t, tc.mode, "opened")
+			o.Publish, o.Label = true, true
+			var logs strings.Builder
+			o.Log = log.New(&logs, "", 0)
+			rec, err := run.Run(context.Background(), o, f)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, want error %v", err, tc.wantErr)
+			}
+			if len(f.Added) != 0 || len(f.Removed) != 0 {
+				t.Fatalf("label written: %v %v", f.Added, f.Removed)
+			}
+			if !tc.wantErr && (rec.DetTier != 2 || !strings.Contains(logs.String(), "::warning::")) {
+				t.Fatalf("tier %d logs %q", rec.DetTier, logs.String())
+			}
+		})
+	}
+}

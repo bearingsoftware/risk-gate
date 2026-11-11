@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"slices"
 	"strconv"
@@ -153,6 +155,11 @@ func Run(ctx context.Context, o Options, g GitHub) (decision.Record, error) {
 			Summary: Summary(rec, o.Mode),
 			Text:    decision.CheckText(b),
 		})
+		var se *gh.StatusError
+		if err != nil && o.Mode == "shadow" && errors.As(err, &se) && se.Status == http.StatusForbidden {
+			o.Log.Printf("::warning::read-only token, check run and label skipped: %v", err)
+			return rec, nil
+		}
 		if err != nil {
 			return decision.Record{}, fmt.Errorf("publishing check run: %w", err)
 		}
