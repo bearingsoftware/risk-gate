@@ -102,6 +102,11 @@ func Classify(ctx context.Context, o ClassifyOptions, g ClassifyGitHub) (*decisi
 	if pr.Fork {
 		skip(decision.SkipFork)
 		o.Log.Printf("::notice::fork pull request: token is read-only, no AI record published")
+		if o.Write != nil {
+			if err := o.Write(rec); err != nil {
+				o.Log.Printf("::warning::AI record not written: %v", err)
+			}
+		}
 		return &rec, nil
 	}
 	if classified(ctx, g, o, pr.HeadSHA) {

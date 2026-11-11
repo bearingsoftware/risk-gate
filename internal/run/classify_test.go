@@ -204,12 +204,17 @@ func TestClassifyForkWritesNothing(t *testing.T) {
 	g.PR.Fork = true
 	api := &stubAPI{resp: okResp()}
 	o.API = api
+	var written []decision.AIRecord
+	o.Write = func(r decision.AIRecord) error { written = append(written, r); return nil }
 	rec, err := Classify(context.Background(), o, g)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rec == nil || rec.Status != decision.AISkipped || *rec.SkipReason != decision.SkipFork {
 		t.Fatalf("record %+v", rec)
+	}
+	if len(written) != 1 || written[0].SkipReason == nil || *written[0].SkipReason != decision.SkipFork {
+		t.Fatalf("fork skip record must be written to --out: %+v", written)
 	}
 	if len(g.Checks) != 0 || api.calls != 0 {
 		t.Fatalf("checks %d calls %d", len(g.Checks), api.calls)

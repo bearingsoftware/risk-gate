@@ -311,8 +311,11 @@ func TestClassifyRequestShape(t *testing.T) {
 	}
 	oc, _ := got["output_config"].(map[string]any)
 	format, _ := oc["format"].(map[string]any)
-	if raw, _ := json.Marshal(format["schema"]); strings.Contains(string(raw), "maxLength") || strings.Contains(string(raw), "minItems") {
-		t.Errorf("wire schema carries unsupported keywords: %s", raw)
+	raw, _ := json.Marshal(format["schema"])
+	for _, k := range unsupportedByAPI {
+		if strings.Contains(string(raw), `"`+k+`"`) {
+			t.Errorf("request carries unsupported keyword %s: %s", k, raw)
+		}
 	}
 	if oc["effort"] != "low" || format["type"] != "json_schema" || format["schema"] == nil {
 		t.Errorf("output_config %v", oc)
