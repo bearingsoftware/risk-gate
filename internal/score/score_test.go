@@ -522,6 +522,9 @@ func TestDepManifestFloorByWeights(t *testing.T) {
 		{"go.mod", []File{lines("go.mod", 1)}, true, true},
 		{"package.json with lockfile", []File{lines("web/package.json", 1), lines("web/yarn.lock", 1)}, true, true},
 		{"package.json renamed to yarn.lock", []File{{Path: "yarn.lock", PreviousPath: "package.json", Status: "renamed", Additions: 1}}, true, true},
+		{"go.sum alone", []File{lines("go.sum", 1)}, true, false},
+		{"go.mod renamed to go.sum", []File{{Path: "go.sum", PreviousPath: "go.mod", Status: "renamed", Additions: 1}}, true, true},
+		{"go.mod removed", []File{{Path: "go.mod", Status: "removed", Deletions: 3}}, true, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
