@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -67,40 +66,6 @@ func hotFileCount(prior []mergedPR, self int, created time.Time, files []string,
 	return n
 }
 
-type variant struct {
-	Name    string
-	Weights *score.Weights
-}
-
-// variants returns v1 as-is plus four in-memory weight edits; no change to internal/score is needed.
-func variants(base *score.Weights) ([]variant, error) {
-	if len(base.Size) != 4 {
-		return nil, fmt.Errorf("size bands: want 4, have %d", len(base.Size))
-	}
-	with := func(points ...int) []score.SizeBand {
-		bands := slices.Clone(base.Size)
-		for i := range bands {
-			bands[i].Points = points[i]
-		}
-		return bands
-	}
-	a := *base
-	a.Size = with(0, 1, 2, 2)
-	b := *base
-	b.Size = with(0, 1, 1, 2)
-	c := *base
-	c.NoTests.Points = 1
-	d := *base
-	d.AuthorTenure.Points = 0
-	return []variant{
-		{"v1", base},
-		{"a_size_0_1_2_2", &a},
-		{"b_size_0_1_1_2", &b},
-		{"c_no_tests_1", &c},
-		{"d_author_tenure_0", &d},
-	}, nil
-}
-
 type signalCount struct {
 	Signal string `json:"signal"`
 	Count  int    `json:"count"`
@@ -126,13 +91,13 @@ type scoredPR struct {
 	Results map[string]score.Result
 }
 
-// summarise tallies every PR in one variant. Signal detail is only built for v1.
-func summarise(prs []scoredPR, variantName string, detailed bool) map[string]*laneSummary {
+// summarise tallies every PR scored under one weights file.
+func summarise(prs []scoredPR, weightsName string) map[string]*laneSummary {
 	out := map[string]*laneSummary{}
 	signals := map[string]map[string]int{}
 	drivers := map[string]map[string]int{}
 	for _, sp := range prs {
-		r := sp.Results[variantName]
+		r := sp.Results[weightsName]
 		s := out[r.Lane]
 		if s == nil {
 			s = &laneSummary{Tier2FloorDriven: map[string]int{}}
@@ -149,9 +114,6 @@ func summarise(prs []scoredPR, variantName string, detailed bool) map[string]*la
 			s.Tier1++
 		case 2:
 			s.Tier2++
-		}
-		if !detailed {
-			continue
 		}
 		s.ScoreHistogram[r.Score]++
 		seen := map[string]bool{}
@@ -188,10 +150,6 @@ func summarise(prs []scoredPR, variantName string, detailed bool) map[string]*la
 			s.Tier2Pct = math.Round(float64(s.Tier2)*1000/float64(s.Count)) / 10
 		}
 		s.Tier2Over70Pct = lane == "human" && s.Tier2Pct > 70
-		if !detailed {
-			s.Tier2FloorDriven, s.ScoreHistogram = nil, nil
-			continue
-		}
 		s.Tier2Drivers = topSignals(drivers[lane], 10)
 		s.TopSignals = topSignals(signals[lane], 10)
 	}

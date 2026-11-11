@@ -1,5 +1,5 @@
-// Command replay scores every merged PR in the frozen baseline window with the weights under test,
-// plus in-memory variants, and writes a tier-distribution report.
+// Command replay scores every merged PR in the frozen baseline window under each weights file and
+// writes a tier-distribution report.
 package main
 
 import (
@@ -29,6 +29,11 @@ var repoSpecs = []repoSpec{
 	{"component-test-framework", "main", "main"},
 }
 
+type namedWeights struct {
+	Name string
+	W    *score.Weights
+}
+
 type baselineFile struct {
 	Window struct {
 		MergedFrom string `json:"merged_from"`
@@ -54,6 +59,7 @@ type window struct {
 type prRow struct {
 	Repo       string   `json:"repo"`
 	Base       string   `json:"base"`
+	Weights    string   `json:"weights"`
 	PR         int      `json:"pr"`
 	Lane       string   `json:"lane"`
 	DetTier    int      `json:"det_tier"`
@@ -77,8 +83,7 @@ type baselineCheck struct {
 type repoOut struct {
 	IntegrationBranch string                             `json:"integration_branch"`
 	TiersRef          string                             `json:"tiers_ref"`
-	Lanes             map[string]*laneSummary            `json:"lanes"`
-	Variants          map[string]map[string]*laneSummary `json:"variants"`
+	Weights           map[string]map[string]*laneSummary `json:"weights"`
 	BaselineCheck     baselineCheck                      `json:"baseline_check"`
 }
 
@@ -86,7 +91,7 @@ type output struct {
 	GeneratedAt   string             `json:"generated_at"`
 	WindowFrom    string             `json:"window_from"`
 	WindowTo      string             `json:"window_to"`
-	WeightsSHA256 string             `json:"weights_sha256"`
+	WeightsSHA256 map[string]string  `json:"weights_sha256"`
 	APICalls      int64              `json:"api_calls"`
 	Notes         []string           `json:"notes"`
 	Repos         map[string]repoOut `json:"repos"`
@@ -97,10 +102,10 @@ var notes = []string{
 	"sast_new_high, coverage_delta and api_break are nil (unavailable): their floors and score items never fire",
 	"first_time_contributor is 'no commits by author in the cached integration-branch history before created_at', not all-time",
 	"commit history is cached from the earliest created_at of the window minus 180d, so tenure covers the full lookback",
-	"hot files look back over cached PRs merged from window start minus 30d; the live 100-PR cap is applied to the most recent matches",
+	"hot files look back over cached PRs merged from window start minus 30d; the live 100-PR cap is applied to the most recent matches; touched_by_more_than comes from each weights file",
 	"author_commits uses committer date on the integration branch; live uses the API author filter with the since parameter",
 	"joule-genie tier file is read from chore/finch-523-review-tiers (unmerged), as specified",
-	"release lane is PRs whose head matches release.heads, within the base=integration listing only (matches baseline other_base definition)",
+	"release lane is PRs headed by release.heads that merged into main; hot files and tenure use each base's own history, as live does",
 }
 
 func main() {
@@ -110,11 +115,32 @@ func main() {
 	}
 }
 
+// parseWeightsFlag reads name=path pairs, e.g. v1=weights/v1.yml,v2=weights/v2.yml.
+func parseWeightsFlag(s string) ([]namedWeights, error) {
+	var out []namedWeights
+	for _, pair := range strings.Split(s, ",") {
+		name, path, ok := strings.Cut(pair, "=")
+		if !ok || name == "" {
+			return nil, fmt.Errorf("weights %q: want name=path", pair)
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("reading weights %s: %w", name, err)
+		}
+		w, err := score.ParseWeights(b)
+		if err != nil {
+			return nil, fmt.Errorf("weights %s: %w", name, err)
+		}
+		out = append(out, namedWeights{Name: name, W: w})
+	}
+	return out, nil
+}
+
 func run(args []string, stdout io.Writer) error {
 	fl := flag.NewFlagSet("replay", flag.ContinueOnError)
 	cacheDir := fl.String("cache", "", "directory for cached GitHub responses (required)")
 	outPath := fl.String("out", "", "output JSON path (required)")
-	weightsPath := fl.String("weights", "weights/v1.yml", "weights file to replay")
+	weightsFlag := fl.String("weights", "v1=weights/v1.yml,v2=weights/v2.yml", "name=path weights files to replay; the first is the baseline check")
 	baselinePath := fl.String("baseline", "baseline/2026-11-10.json", "frozen baseline file")
 	owner := fl.String("owner", "bearingsoftware", "GitHub owner of the trial repos")
 	workers := fl.Int("workers", 4, "concurrent gh calls")
@@ -125,15 +151,7 @@ func run(args []string, stdout io.Writer) error {
 		return errors.New("--cache and --out are required")
 	}
 
-	wRaw, err := os.ReadFile(*weightsPath)
-	if err != nil {
-		return fmt.Errorf("reading weights: %w", err)
-	}
-	base, err := score.ParseWeights(wRaw)
-	if err != nil {
-		return err
-	}
-	vars, err := variants(base)
+	ws, err := parseWeightsFlag(*weightsFlag)
 	if err != nil {
 		return err
 	}
@@ -160,29 +178,36 @@ func run(args []string, stdout io.Writer) error {
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
 		WindowFrom:    bl.Window.MergedFrom,
 		WindowTo:      bl.Window.MergedTo,
-		WeightsSHA256: base.SHA256,
+		WeightsSHA256: map[string]string{},
 		Notes:         notes,
 		Repos:         map[string]repoOut{},
 	}
+	for _, nw := range ws {
+		out.WeightsSHA256[nw.Name] = nw.W.SHA256
+	}
 	for _, spec := range repoSpecs {
-		ro, rows, err := runRepo(c, spec, base, vars, win, *workers)
+		ro, rows, err := runRepo(c, spec, ws, win, *workers)
 		if err != nil {
 			return fmt.Errorf("%s: %w", spec.Name, err)
 		}
 		b := bl.Repos[spec.Name]
+		v1 := ro.Weights[ws[0].Name]
 		ro.BaselineCheck = baselineCheck{
-			ReplayTotal:     len(rows.all),
+			ReplayTotal:     rows.total,
 			BaselineTotal:   b.MergedTotal - b.OtherBase,
-			ReplayHuman:     laneCount(ro, "human"),
+			ReplayHuman:     laneCount(v1, "human"),
 			BaselineHuman:   b.Human.Count,
-			ReplayBot:       laneCount(ro, "bot"),
+			ReplayBot:       laneCount(v1, "bot"),
 			BaselineBot:     b.Bot.Count,
-			ReplayRelease:   laneCount(ro, "release"),
+			ReplayRelease:   laneCount(v1, "release"),
 			BaselineRelease: b.ReleaseLane,
 		}
 		out.Repos[spec.Name] = ro
 		out.Rows = append(out.Rows, rows.rows...)
-		fmt.Fprintf(stdout, "%s: %d PRs, human tier2 %.1f%%\n", spec.Name, len(rows.all), humanTier2Pct(ro))
+		for _, nw := range ws {
+			fmt.Fprintf(stdout, "%s %s: human tier2 %.1f%% of %d\n", spec.Name, nw.Name,
+				humanTier2Pct(ro.Weights[nw.Name]), laneCount(ro.Weights[nw.Name], "human"))
+		}
 	}
 	out.APICalls = c.calls.Load()
 
@@ -197,28 +222,29 @@ func run(args []string, stdout io.Writer) error {
 	return nil
 }
 
-func humanTier2Pct(ro repoOut) float64 {
-	if s := ro.Lanes["human"]; s != nil {
+func humanTier2Pct(lanes map[string]*laneSummary) float64 {
+	if s := lanes["human"]; s != nil {
 		return s.Tier2Pct
 	}
 	return 0
 }
 
-func laneCount(ro repoOut, lane string) int {
-	if s := ro.Lanes[lane]; s != nil {
+func laneCount(lanes map[string]*laneSummary, lane string) int {
+	if s := lanes[lane]; s != nil {
 		return s.Count
 	}
 	return 0
 }
 
 type repoRows struct {
-	all  []scoredPR
-	rows []prRow
+	total int
+	all   []scoredPR
+	rows  []prRow
 }
 
 // runRepo scores the integration branch's merged PRs, plus the release lane (PRs headed by a release
 // head that merged into another base, normally main). Hot files and tenure use each base's own history.
-func runRepo(c *client, spec repoSpec, w *score.Weights, vars []variant, win window, workers int) (repoOut, repoRows, error) {
+func runRepo(c *client, spec repoSpec, ws []namedWeights, win window, workers int) (repoOut, repoRows, error) {
 	var ro repoOut
 	var rr repoRows
 	ro.IntegrationBranch = spec.Branch
@@ -238,27 +264,32 @@ func runRepo(c *client, spec repoSpec, w *score.Weights, vars []variant, win win
 		bases = append(bases, "main")
 	}
 	for _, b := range bases {
-		scored, rows, err := runBase(c, spec, cfg, b, w, vars, win, workers)
+		scored, rows, err := runBase(c, spec, cfg, b, ws, win, workers)
 		if err != nil {
 			return ro, rr, fmt.Errorf("base %s: %w", b, err)
 		}
 		rr.all = append(rr.all, scored...)
 		rr.rows = append(rr.rows, rows...)
 	}
-	if len(rr.all) == 0 {
+	rr.total = len(rr.all)
+	if rr.total == 0 {
 		return ro, rr, errors.New("no merged PRs in window")
 	}
 
-	slices.SortFunc(rr.rows, func(a, b prRow) int { return a.PR - b.PR })
-	ro.Lanes = summarise(rr.all, "v1", true)
-	ro.Variants = map[string]map[string]*laneSummary{}
-	for _, v := range vars[1:] {
-		ro.Variants[v.Name] = summarise(rr.all, v.Name, false)
+	slices.SortFunc(rr.rows, func(a, b prRow) int {
+		if a.PR != b.PR {
+			return a.PR - b.PR
+		}
+		return strings.Compare(a.Weights, b.Weights)
+	})
+	ro.Weights = map[string]map[string]*laneSummary{}
+	for _, nw := range ws {
+		ro.Weights[nw.Name] = summarise(rr.all, nw.Name)
 	}
 	return ro, rr, nil
 }
 
-func runBase(c *client, spec repoSpec, cfg *tiers.Config, base string, w *score.Weights, vars []variant, win window, workers int) ([]scoredPR, []prRow, error) {
+func runBase(c *client, spec repoSpec, cfg *tiers.Config, base string, ws []namedWeights, win window, workers int) ([]scoredPR, []prRow, error) {
 	cutoff := win.from.AddDate(0, 0, -30)
 	list, err := c.mergedList(spec.Name, base, cutoff)
 	if err != nil {
@@ -348,25 +379,27 @@ func runBase(c *client, spec repoSpec, cfg *tiers.Config, base string, w *score.
 			in.AuthorCommits180d = &tenure
 			in.FirstTimeContributor = &first
 		}
-		hot := hotFileCount(mergedPRs, p.Number, p.CreatedAt, names, w.HotLookback)
-		in.HotFiles = &hot
 
 		results := map[string]score.Result{}
-		for _, v := range vars {
+		for _, nw := range ws {
 			x := in
-			x.Weights = v.Weights
-			results[v.Name] = score.Evaluate(x)
+			x.Weights = nw.W
+			hot := hotFileCount(mergedPRs, p.Number, p.CreatedAt, names, nw.W.HotLookback)
+			x.HotFiles = &hot
+			results[nw.Name] = score.Evaluate(x)
 		}
-		v1 := results["v1"]
-		scored = append(scored, scoredPR{Number: p.Number, Lane: v1.Lane, Results: results})
-		row := prRow{Repo: spec.Name, Base: base, PR: p.Number, Lane: v1.Lane, DetTier: v1.DetTier, Score: v1.Score, PathTier: v1.PathTier, Floors: []string{}, ScoreItems: []string{}}
-		for _, f := range v1.Floors {
-			row.Floors = append(row.Floors, f.Rule)
+		scored = append(scored, scoredPR{Number: p.Number, Lane: results[ws[0].Name].Lane, Results: results})
+		for _, nw := range ws {
+			r := results[nw.Name]
+			row := prRow{Repo: spec.Name, Base: base, Weights: nw.Name, PR: p.Number, Lane: r.Lane, DetTier: r.DetTier, Score: r.Score, PathTier: r.PathTier, Floors: []string{}, ScoreItems: []string{}}
+			for _, f := range r.Floors {
+				row.Floors = append(row.Floors, f.Rule)
+			}
+			for _, it := range r.ScoreItems {
+				row.ScoreItems = append(row.ScoreItems, fmt.Sprintf("%s:%+d", it.Signal, it.Points))
+			}
+			rows = append(rows, row)
 		}
-		for _, it := range v1.ScoreItems {
-			row.ScoreItems = append(row.ScoreItems, fmt.Sprintf("%s:%+d", it.Signal, it.Points))
-		}
-		rows = append(rows, row)
 	}
 	return scored, rows, nil
 }
