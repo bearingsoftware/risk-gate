@@ -66,9 +66,9 @@ func TestEvidencePlan(t *testing.T) {
 `, []string{"source=compute", "apply=false", "package=@bearingsoftware/component-test-framework@0.3.16",
 			"specs=a/openapi.yaml,b/openapi.yaml", "features=a/features", "map=", "allowlist=", "base_path=/v1"}},
 		{"artifact defaults", "evidence:\n  source: artifact\n  apply: true\n  artifact:\n    workflow: ci.yml\n",
-			[]string{"source=artifact", "apply=true", "name=ctf-evidence", "workflow=ci.yml", "wait_seconds=600"}},
+			[]string{"source=artifact", "apply=true", "name=ctf-evidence", "workflow=ci.yml", "wait_seconds=600", "wait_minutes=12"}},
 		{"artifact set", "evidence:\n  source: artifact\n  artifact:\n    workflow: ci.yml\n    name: ev\n    wait_seconds: 1800\n",
-			[]string{"source=artifact", "apply=false", "name=ev", "workflow=ci.yml", "wait_seconds=1800"}},
+			[]string{"source=artifact", "apply=false", "name=ev", "workflow=ci.yml", "wait_seconds=1800", "wait_minutes=32"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

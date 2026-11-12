@@ -153,7 +153,7 @@ func TestEvidencePlanCmd(t *testing.T) {
 	}{
 		{"absent", tiersDoc, "source=off\n", 0},
 		{"artifact", tiersDoc + "evidence:\n  source: artifact\n  artifact:\n    workflow: ci.yml\n",
-			"source=artifact\napply=false\nname=ctf-evidence\nworkflow=ci.yml\nwait_seconds=600\n", 0},
+			"source=artifact\napply=false\nname=ctf-evidence\nworkflow=ci.yml\nwait_seconds=600\nwait_minutes=12\n", 0},
 		{"compute", tiersDoc + "evidence:\n  source: compute\n  apply: true\n  compute:\n    package: \"x@1.2.3\"\n    specs: [a.yaml, b.yaml]\n    features: [f]\n",
 			"source=compute\napply=true\npackage=x@1.2.3\nspecs=a.yaml,b.yaml\nfeatures=f\nmap=\nallowlist=\nbase_path=\n", 0},
 		{"invalid block is fatal", tiersDoc + "evidence:\n  source: nope\n", "", 1},

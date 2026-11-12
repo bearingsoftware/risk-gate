@@ -141,7 +141,8 @@ func (e *Evidence) Plan() []string {
 			"map="+c.Map, "allowlist="+c.Allowlist, "base_path="+c.BasePath)
 	case SourceArtifact:
 		a := e.Artifact
-		out = append(out, "name="+a.ArtifactName(), "workflow="+a.Workflow, fmt.Sprintf("wait_seconds=%d", a.Wait()))
+		out = append(out, "name="+a.ArtifactName(), "workflow="+a.Workflow, fmt.Sprintf("wait_seconds=%d", a.Wait()),
+			fmt.Sprintf("wait_minutes=%d", (a.Wait()+59)/60+2))
 	}
 	return out
 }
