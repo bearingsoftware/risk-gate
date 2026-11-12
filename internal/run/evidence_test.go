@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/bearingsoftware/risk-gate/internal/decision"
 	"github.com/bearingsoftware/risk-gate/internal/run"
 )
 
@@ -133,5 +135,90 @@ func TestEvidenceApplyFeedsInputs(t *testing.T) {
 	}
 	if rec.Inputs.CoverageDelta == nil || *rec.Inputs.CoverageDelta != -1.5 || rec.Inputs.APIBreak == nil || !*rec.Inputs.APIBreak || rec.DetTier != 2 || !rec.Evidence.Applied {
 		t.Fatalf("applied evidence: %+v tier %d", rec.Inputs, rec.DetTier)
+	}
+}
+
+func TestEvidenceHostileInputsAreParseErrors(t *testing.T) {
+	t.Parallel()
+	tests := map[string]map[string]string{
+		"oversized generatedBy":   with(goodEvidence(), "evidence.json", `{"generatedBy":"ctf evidence `+strings.Repeat("1", 200<<10)+`"}`),
+		"generatedBy with fence":  with(goodEvidence(), "evidence.json", "{\"generatedBy\":\"ctf evidence 1`\\n```\"}"),
+		"generatedBy not ctf":     with(goodEvidence(), "evidence.json", `{"generatedBy":"something else"}`),
+		"missing generatedBy":     with(goodEvidence(), "evidence.json", `{}`),
+		"oversized evidence.json": with(goodEvidence(), "evidence.json", `{"generatedBy":"ctf evidence 1","pad":"`+strings.Repeat("x", 2<<20)+`"}`),
+		"oversized coverage":      with(goodEvidence(), "coverage-base.txt", "80"+strings.Repeat(" ", 2<<10)),
+		"oversized api-break":     with(goodEvidence(), "api-break.txt", "true"+strings.Repeat("\n", 2<<10)),
+	}
+	for name, files := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			o := opts(t, "shadow", "opened")
+			o.EvidenceSource, o.EvidenceDir = "compute", writeEvidence(t, files)
+			rec, err := run.Run(context.Background(), o, fake(nil, "src/a.go"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			e := rec.Evidence
+			if e == nil || e.Status != "skipped" || e.SkipReason == nil || *e.SkipReason != run.SkipParseError {
+				t.Fatalf("evidence = %+v", e)
+			}
+			b, err := rec.Marshal()
+			if err != nil || len(b) > decision.MaxBytes {
+				t.Fatalf("record %d bytes, err %v", len(b), err)
+			}
+		})
+	}
+}
+
+func TestAcceptedEvidenceKeepsRecordUnderCap(t *testing.T) {
+	t.Parallel()
+	by := "ctf evidence " + strings.Repeat("9", 40)
+	files := with(goodEvidence(), "evidence.json", `{"generatedBy":"`+by+`","pad":"`+strings.Repeat("x", 1<<19)+`"}`)
+	f := fake(nil)
+	for i := range 3000 {
+		f.FileList = append(f.FileList, fake(nil, strings.Repeat("long-directory-name/", 12)+string(rune('a'+i%26))+strings.Repeat("f", 8)+"_"+strings.Repeat("0", 4)+".go").FileList...)
+	}
+	o := opts(t, "shadow", "opened")
+	o.EvidenceSource, o.EvidenceDir, o.EvidenceApply = "compute", writeEvidence(t, files), true
+	rec, err := run.Run(context.Background(), o, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Evidence == nil || rec.Evidence.Status != "ok" || *rec.Evidence.GeneratedBy != by {
+		t.Fatalf("evidence = %+v", rec.Evidence)
+	}
+	if b, err := rec.Marshal(); err != nil || len(b) > decision.MaxBytes {
+		t.Fatalf("record %d bytes, err %v", len(b), err)
+	}
+}
+
+func TestManualFlagsWinOverEvidence(t *testing.T) {
+	t.Parallel()
+	dir := writeEvidence(t, with(goodEvidence(), "api-break.txt", "true"))
+	manual := func(t *testing.T, o *run.Options) {
+		p := filepath.Join(t.TempDir(), "cov")
+		if err := os.WriteFile(p, []byte("50"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		o.CoverageBase, o.CoverageHead = p, p
+		no := false
+		o.APIBreak = &no
+	}
+	var recs [2]decision.Record
+	for i, apply := range []bool{false, true} {
+		o := opts(t, "shadow", "opened")
+		o.EvidenceSource, o.EvidenceDir, o.EvidenceApply = "compute", dir, apply
+		manual(t, &o)
+		rec, err := run.Run(context.Background(), o, fake(nil, "src/a.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		recs[i] = rec
+		if *rec.Inputs.CoverageDelta != 0 || *rec.Inputs.APIBreak || rec.DetTier != 1 {
+			t.Fatalf("apply=%v: manual flags lost: %+v tier %d", apply, rec.Inputs, rec.DetTier)
+		}
+		if *rec.Evidence.WouldDetTier != rec.DetTier || *rec.Evidence.WouldScore != rec.Score {
+			t.Fatalf("apply=%v: would_* ignores the manual flags: %+v", apply, rec.Evidence)
+		}
 	}
 }

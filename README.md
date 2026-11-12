@@ -48,7 +48,11 @@ decision is byte-identical to before. Two sources:
 
 - `compute`: the score job runs the pinned `ctf evidence` itself, over the base and head SHAs, in a separate
   `src/` checkout. It installs no PR dependency and runs no PR code (`ctf evidence` reads git objects). The
-  package comes from GitHub Packages with the job token.
+  package is installed from GitHub Packages with the job token, with `--ignore-scripts`, into a private prefix; `ctf`
+  then runs in a separate step with no token and the token `.npmrc` already deleted. The package's transitive
+  dependencies resolve from public npm at run time (no lockfile yet; pinning them is a follow-up).
+  Evidence files are size-capped (1 KB for the text files, 1 MB for `evidence.json`) and `generatedBy` must look like
+  `ctf evidence <version>`; anything else is a `parse_error` skip.
 - `artifact`: the score job waits (polling every 30 s, up to `wait_seconds`, default 600, max 1800) for the
   consumer's `workflow` run on the head SHA to finish, then downloads its `ctf-evidence` artifact. That artifact
   is produced by the PR's own CI, so a PR can influence it; prefer `compute` once evidence is applied.
@@ -60,10 +64,10 @@ and what the score, floors and tier *would* be if applied (`would_*`), while `sc
 produced or read is recorded as a skip (`compute_failed`, `artifact_missing`, `artifact_timeout`, `parse_error`);
 it never fails the gate and is never read as 0. See [contract](docs/contract.md#evidence-optional-evidence-block).
 
-Permissions. The score job requests `packages: read` (compute) and `actions: read` (artifact). A reusable workflow
-cannot raise permissions above its caller's, and GitHub rejects the whole run at startup when a called job asks for
-more than the calling job grants. So when bumping the pinned SHA to a version with evidence, the calling job must
-become:
+Permissions. The score job requests `packages: read` (compute) and `actions: read` (artifact). GitHub documents that
+called workflows can only downgrade permissions, never raise them. Observed behaviour: when a called job asks for more
+than the calling job grants, the run fails at startup with a permissions error and nothing is scored. So when bumping the
+pinned SHA to a version with evidence, the calling job must become:
 
 ```yaml
     permissions: {contents: read, pull-requests: write, checks: write, packages: read, actions: read}

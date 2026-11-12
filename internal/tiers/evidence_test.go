@@ -29,6 +29,7 @@ func TestParseEvidenceErrors(t *testing.T) {
 		{"shell in path", "evidence:\n  source: compute\n  compute:\n" + strings.Replace(okCompute, "api/openapi.yaml", "a;rm.yaml", 1), "characters"},
 		{"leading dash path", "evidence:\n  source: compute\n  compute:\n" + strings.Replace(okCompute, "api/openapi.yaml", "-x.yaml", 1), "starts with -"},
 		{"bad base_path", "evidence:\n  source: compute\n  compute:\n" + okCompute + "    base_path: \"/a/../b\"\n", "base_path"},
+		{"dash base_path", "evidence:\n  source: compute\n  compute:\n" + okCompute + "    base_path: \"-x\"\n", "base_path"},
 		{"artifact without workflow", "evidence:\n  source: artifact\n  artifact:\n    name: ctf-evidence\n", "artifact.workflow"},
 		{"artifact block missing", "evidence:\n  source: artifact\n", "artifact.workflow"},
 		{"workflow with path", "evidence:\n  source: artifact\n  artifact:\n    workflow: .github/workflows/ci.yml\n", "workflow file name"},

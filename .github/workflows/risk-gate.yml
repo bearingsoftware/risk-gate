@@ -95,26 +95,38 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
+      # Only the install step holds a token. The package's transitive dependencies resolve from public npm
+      # at run time (no lockfile yet), so --ignore-scripts keeps them from running code with that token, and the
+      # token-bearing .npmrc is deleted before ctf runs in a step that has no token at all.
+      - name: Evidence install
+        id: install
+        if: steps.plan.outputs.source == 'compute'
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+          PACKAGE: ${{ steps.plan.outputs.package }}
+        run: |
+          npmrc="$RUNNER_TEMP/ctf.npmrc"
+          trap 'rm -f "$npmrc"' EXIT
+          printf '%s\n' '@bearingsoftware:registry=https://npm.pkg.github.com' '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' > "$npmrc"
+          NPM_CONFIG_USERCONFIG="$npmrc" npm install --prefix "$RUNNER_TEMP/ctf" --ignore-scripts --no-audit --no-fund "$PACKAGE"
       - name: Evidence compute
         id: compute
-        if: steps.plan.outputs.source == 'compute'
+        if: steps.install.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 10
         working-directory: src
         env:
-          NODE_AUTH_TOKEN: ${{ github.token }}
-          NPM_CONFIG_IGNORE_SCRIPTS: "true"
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PACKAGE: ${{ steps.plan.outputs.package }}
           SPECS: ${{ steps.plan.outputs.specs }}
           FEATURES: ${{ steps.plan.outputs.features }}
           MAP: ${{ steps.plan.outputs.map }}
           ALLOWLIST: ${{ steps.plan.outputs.allowlist }}
           BASE_PATH: ${{ steps.plan.outputs.base_path }}
         run: |
-          printf '%s\n' '@bearingsoftware:registry=https://npm.pkg.github.com' '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' > "$RUNNER_TEMP/ctf.npmrc"
-          export NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/ctf.npmrc"
+          unset GITHUB_TOKEN NODE_AUTH_TOKEN GH_TOKEN
           args=(--base "$BASE_SHA" --head "$HEAD_SHA" --out ../evidence)
           IFS=, read -ra specs <<< "$SPECS"
           IFS=, read -ra features <<< "$FEATURES"
@@ -123,7 +135,7 @@ jobs:
           [[ -z "$MAP" ]] || args+=(--map "$MAP")
           [[ -z "$ALLOWLIST" ]] || args+=(--allowlist "$ALLOWLIST")
           [[ -z "$BASE_PATH" ]] || args+=(--base-path "$BASE_PATH")
-          npx --yes --package="$PACKAGE" -- ctf evidence "${args[@]}"
+          "$RUNNER_TEMP/ctf/node_modules/.bin/ctf" evidence "${args[@]}"
       # source artifact: wait for the consumer CI run on the head SHA, then download its ctf-evidence artifact.
       - name: Evidence wait
         id: wait
@@ -174,7 +186,7 @@ jobs:
           WEIGHTS_VERSION: ${{ inputs.weights-version }}
           EVIDENCE_SOURCE: ${{ steps.plan.outputs.source }}
           EVIDENCE_APPLY: ${{ steps.plan.outputs.apply }}
-          EVIDENCE_ERROR: ${{ (steps.compute.outcome == 'failure' && 'compute_failed') || steps.wait.outputs.error || (steps.download.outcome == 'failure' && 'artifact_missing') || '' }}
+          EVIDENCE_ERROR: ${{ ((steps.install.outcome == 'failure' || steps.compute.outcome == 'failure') && 'compute_failed') || steps.wait.outputs.error || (steps.download.outcome == 'failure' && 'artifact_missing') || '' }}
         timeout-minutes: 5
         run: |
           args=()

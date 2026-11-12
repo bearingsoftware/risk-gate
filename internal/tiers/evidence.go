@@ -69,7 +69,7 @@ func (e *Evidence) validate() error {
 				return fmt.Errorf("compute: %w", err)
 			}
 		}
-		if c.BasePath != "" && (!safeBasePath.MatchString(c.BasePath) || hasDotDot(c.BasePath)) {
+		if c.BasePath != "" && (!safeBasePath.MatchString(c.BasePath) || hasDotDot(c.BasePath) || strings.HasPrefix(c.BasePath, "-")) {
 			return fmt.Errorf("compute.base_path %q is not a plain URL path", c.BasePath)
 		}
 	case SourceArtifact:
