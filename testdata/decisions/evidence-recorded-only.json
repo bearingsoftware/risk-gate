@@ -1,0 +1,116 @@
+{
+  "schema": "risk-gate.decision/v1",
+  "repo": "bearingsoftware/secure-repo",
+  "pr": 1302,
+  "base_ref": "develop",
+  "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "head_ref": "feat/secrepo-901-list-sort",
+  "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "run": {
+    "id": 19000000001,
+    "attempt": 1,
+    "event": "pull_request",
+    "action": "synchronize",
+    "at": "2026-11-24T10:15:00Z"
+  },
+  "mode": "shadow",
+  "scorer": {
+    "version": "0.1.0",
+    "weights_version": "1",
+    "weights_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "tiers_file_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "lane": "human",
+  "author": {
+    "login": "chattersley",
+    "bot": false
+  },
+  "path_tier": 1,
+  "floors": [],
+  "score": 1,
+  "score_items": [
+    {
+      "signal": "size",
+      "points": 1,
+      "value": 88
+    }
+  ],
+  "det_tier": 1,
+  "inputs": {
+    "title": "feat(SECREPO-901): sort package list by name",
+    "labels": [],
+    "lines_added": 70,
+    "lines_deleted": 18,
+    "files_changed": 3,
+    "top_level_dirs": 1,
+    "test_lines": 30,
+    "non_test_lines": 58,
+    "coverage_delta": null,
+    "sast_new_high": null,
+    "api_break": null,
+    "dep_manifest_changed": false,
+    "author_commits_180d": 412,
+    "first_time_contributor": false,
+    "hot_files": 0,
+    "bot_update_type": null,
+    "files": [
+      {
+        "path": "web/src/pages/Packages.tsx",
+        "status": "modified",
+        "additions": 40,
+        "deletions": 10,
+        "tier": 1
+      },
+      {
+        "path": "web/src/pages/Packages.test.tsx",
+        "status": "modified",
+        "additions": 25,
+        "deletions": 5,
+        "tier": 1
+      },
+      {
+        "path": "web/src/pages/sort.ts",
+        "status": "modified",
+        "additions": 5,
+        "deletions": 3,
+        "tier": 1
+      }
+    ],
+    "files_truncated": false
+  },
+  "unavailable": [
+    "sast_new_high",
+    "coverage_delta",
+    "api_break"
+  ],
+  "attestation": {
+    "required": false,
+    "attested": false,
+    "label": "tier2-self-reviewed",
+    "by": null,
+    "at": null
+  },
+  "check": {
+    "conclusion": "success",
+    "would_block": false
+  },
+  "evidence": {
+    "source": "artifact",
+    "applied": false,
+    "status": "ok",
+    "skip_reason": null,
+    "coverage_base": 82.35,
+    "coverage_head": 70.1,
+    "api_break": true,
+    "generated_by": "ctf evidence 0.3.16",
+    "evidence_sha256": "fb1a4f63bf4a3ef39d9db0b689dd15b7769dd036d0cfdae797216d0aae7946cc",
+    "would_score": 2,
+    "would_det_tier": 2,
+    "would_floors": [
+      {
+        "rule": "api_break",
+        "tier": 2
+      }
+    ]
+  }
+}

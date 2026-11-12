@@ -24,7 +24,9 @@ permissions: {}
 jobs:
   score:
     runs-on: ${{ fromJSON(inputs.runs-on) }}
-    timeout-minutes: 10
+    # 10 minutes of work plus the longest artifact wait (evidence.artifact.wait_seconds, max 1800).
+    # A job-level timeout cannot read step outputs, so the wait step carries the bound and the other steps their own.
+    timeout-minutes: 45
     concurrency:
       group: risk-gate-${{ github.repository }}-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -32,6 +34,8 @@ jobs:
       contents: read
       pull-requests: write
       checks: write
+      packages: read # evidence source compute: install the pinned ctf from GitHub Packages
+      actions: read # evidence source artifact: find the consumer's run and download its artifact
     steps:
       - name: Check inputs
         env:
@@ -56,6 +60,123 @@ jobs:
         env:
           RISK_GATE_REF: ${{ inputs.risk-gate-ref }}
         run: go install "github.com/bearingsoftware/risk-gate/cmd/risk-gate@${RISK_GATE_REF}"
+        timeout-minutes: 5
+      - name: Evidence plan
+        id: plan
+        timeout-minutes: 2
+        run: '"$(go env GOPATH)/bin/risk-gate" evidence-plan --tiers .github/review-tiers.yml >> "$GITHUB_OUTPUT"'
+      # source compute: base and head are read through git only, in a separate checkout. No PR dependency is
+      # installed and no PR code runs; ctf evidence reads files from git objects.
+      - name: Evidence checkout
+        if: steps.plan.outputs.source == 'compute'
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: src
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Evidence fetch head
+        if: steps.plan.outputs.source == 'compute'
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -C src -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            fetch --no-tags origin "refs/pull/${PR}/head"
+      - name: Evidence node
+        if: steps.plan.outputs.source == 'compute'
+        continue-on-error: true
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      # Only the install step holds a token. The package's transitive dependencies resolve from public npm
+      # at run time (no lockfile yet), so --ignore-scripts keeps them from running code with that token, and the
+      # token-bearing .npmrc is deleted before ctf runs in a step that has no token at all.
+      - name: Evidence install
+        id: install
+        if: steps.plan.outputs.source == 'compute'
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+          PACKAGE: ${{ steps.plan.outputs.package }}
+        run: |
+          npmrc="$RUNNER_TEMP/ctf.npmrc"
+          trap 'rm -f "$npmrc"' EXIT
+          printf '%s\n' '@bearingsoftware:registry=https://npm.pkg.github.com' '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' > "$npmrc"
+          NPM_CONFIG_USERCONFIG="$npmrc" npm install --prefix "$RUNNER_TEMP/ctf" --ignore-scripts --no-audit --no-fund "$PACKAGE"
+      - name: Evidence compute
+        id: compute
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 10
+        working-directory: src
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SPECS: ${{ steps.plan.outputs.specs }}
+          FEATURES: ${{ steps.plan.outputs.features }}
+          MAP: ${{ steps.plan.outputs.map }}
+          ALLOWLIST: ${{ steps.plan.outputs.allowlist }}
+          BASE_PATH: ${{ steps.plan.outputs.base_path }}
+        run: |
+          unset GITHUB_TOKEN NODE_AUTH_TOKEN GH_TOKEN
+          args=(--base "$BASE_SHA" --head "$HEAD_SHA" --out ../evidence)
+          IFS=, read -ra specs <<< "$SPECS"
+          IFS=, read -ra features <<< "$FEATURES"
+          for s in "${specs[@]}"; do args+=(--spec "$s"); done
+          for f in "${features[@]}"; do args+=(--features "$f"); done
+          [[ -z "$MAP" ]] || args+=(--map "$MAP")
+          [[ -z "$ALLOWLIST" ]] || args+=(--allowlist "$ALLOWLIST")
+          [[ -z "$BASE_PATH" ]] || args+=(--base-path "$BASE_PATH")
+          "$RUNNER_TEMP/ctf/node_modules/.bin/ctf" evidence "${args[@]}"
+      # source artifact: wait for the consumer CI run on the head SHA, then download its ctf-evidence artifact.
+      - name: Evidence wait
+        id: wait
+        if: steps.plan.outputs.source == 'artifact'
+        continue-on-error: true
+        timeout-minutes: ${{ fromJSON(steps.plan.outputs.wait_minutes || '12') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WORKFLOW: ${{ steps.plan.outputs.workflow }}
+          WAIT: ${{ steps.plan.outputs.wait_seconds }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          deadline=$((SECONDS + WAIT))
+          while true; do
+            if ! row="$(gh api "repos/${REPO}/actions/workflows/${WORKFLOW}/runs?head_sha=${HEAD_SHA}&per_page=1" \
+              --jq '.workflow_runs[0] | select(. != null) | [.id, .status] | @tsv')"; then
+              echo "error=artifact_missing" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            read -r run_id status <<< "$row"
+            if [[ "$status" == completed ]]; then
+              echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if (( SECONDS >= deadline )); then
+              if [[ -n "$run_id" ]]; then echo "error=artifact_timeout" >> "$GITHUB_OUTPUT"; else echo "error=artifact_missing" >> "$GITHUB_OUTPUT"; fi
+              exit 0
+            fi
+            sleep 30
+          done
+      - name: Evidence download
+        id: download
+        if: steps.wait.outputs.run_id != ''
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ steps.plan.outputs.name }}
+          path: evidence
+          run-id: ${{ steps.wait.outputs.run_id }}
+          github-token: ${{ github.token }}
       - name: Score
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -63,10 +184,20 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           MODE: ${{ inputs.mode }}
           WEIGHTS_VERSION: ${{ inputs.weights-version }}
+          EVIDENCE_SOURCE: ${{ steps.plan.outputs.source }}
+          EVIDENCE_APPLY: ${{ steps.plan.outputs.apply }}
+          EVIDENCE_ERROR: ${{ ((steps.install.outcome == 'failure' || steps.compute.outcome == 'failure') && 'compute_failed') || steps.wait.outputs.error || (steps.download.outcome == 'failure' && 'artifact_missing') || '' }}
+        timeout-minutes: 5
         run: |
+          args=()
+          if [[ "$EVIDENCE_SOURCE" == compute || "$EVIDENCE_SOURCE" == artifact ]]; then
+            args+=(--evidence-source "$EVIDENCE_SOURCE")
+            [[ "$EVIDENCE_APPLY" != true ]] || args+=(--evidence-apply)
+            if [[ -n "$EVIDENCE_ERROR" ]]; then args+=(--evidence-error "$EVIDENCE_ERROR"); else args+=(--evidence-dir evidence); fi
+          fi
           "$(go env GOPATH)/bin/risk-gate" score \
             --repo "$REPO" --pr "$PR" --mode "$MODE" --weights-version "$WEIGHTS_VERSION" \
-            --tiers .github/review-tiers.yml --out risk-decision.json --publish --label
+            --tiers .github/review-tiers.yml --out risk-decision.json --publish --label "${args[@]}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

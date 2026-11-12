@@ -38,6 +38,7 @@ type Record struct {
 	Unavailable     []string    `json:"unavailable"`
 	Attestation     Attestation `json:"attestation"`
 	Check           Check       `json:"check"`
+	Evidence        *Evidence   `json:"evidence,omitempty"`
 }
 
 type Run struct {
@@ -113,6 +114,23 @@ type Check struct {
 	Conclusion string `json:"conclusion"`
 	WouldBlock bool   `json:"would_block"`
 	Reason     string `json:"reason,omitempty"`
+}
+
+// Evidence records component-test evidence. Unless Applied, it never changed the score, floors or tier;
+// the would_* fields show what applying it would have produced.
+type Evidence struct {
+	Source         string   `json:"source"`
+	Applied        bool     `json:"applied"`
+	Status         string   `json:"status"`
+	SkipReason     *string  `json:"skip_reason"`
+	CoverageBase   *float64 `json:"coverage_base"`
+	CoverageHead   *float64 `json:"coverage_head"`
+	APIBreak       *bool    `json:"api_break"`
+	GeneratedBy    *string  `json:"generated_by"`
+	EvidenceSHA256 *string  `json:"evidence_sha256"`
+	WouldScore     *int     `json:"would_score"`
+	WouldDetTier   *int     `json:"would_det_tier"`
+	WouldFloors    []Floor  `json:"would_floors"`
 }
 
 // Marshal encodes the record, capping inputs.files at MaxFiles and halving it

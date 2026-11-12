@@ -17,6 +17,7 @@ type Config struct {
 	Tiers       map[int]Tier       `yaml:"tiers"`
 	Release     Release            `yaml:"release"`
 	Attestation *AttestationConfig `yaml:"attestation"`
+	Evidence    *Evidence          `yaml:"evidence"`
 }
 
 type Tier struct {
@@ -71,6 +72,11 @@ func Parse(data []byte) (*Config, error) {
 	}
 	if a := c.Attestation; a != nil && a.Label == "" {
 		return nil, fmt.Errorf("tiers file: attestation.label is required")
+	}
+	if c.Evidence != nil {
+		if err := c.Evidence.validate(); err != nil {
+			return nil, fmt.Errorf("tiers file: evidence: %w", err)
+		}
 	}
 	return &c, nil
 }

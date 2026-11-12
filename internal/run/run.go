@@ -51,14 +51,20 @@ type Options struct {
 	CoverageBase string
 	CoverageHead string
 	APIBreak     *bool
-	RunID        int64
-	RunAttempt   int
-	Event        string
-	EventAction  string
-	Publish      bool
-	Label        bool
-	Now          func() time.Time
-	Log          *log.Logger
+	// EvidenceSource turns the evidence block on: "compute" or "artifact".
+	EvidenceSource string
+	EvidenceDir    string
+	EvidenceApply  bool
+	// EvidenceError is the skip reason when the evidence could not be produced.
+	EvidenceError string
+	RunID         int64
+	RunAttempt    int
+	Event         string
+	EventAction   string
+	Publish       bool
+	Label         bool
+	Now           func() time.Time
+	Log           *log.Logger
 }
 
 const (
@@ -113,6 +119,10 @@ func Run(ctx context.Context, o Options, g GitHub) (decision.Record, error) {
 	if err := optionalSignals(o, &in); err != nil {
 		return decision.Record{}, err
 	}
+	ev := loadEvidence(o)
+	if ev.ok && o.EvidenceApply {
+		ev.apply(&in)
+	}
 	now := o.Now()
 	if !pr.AuthorBot {
 		authorTenure(ctx, g, o, pr, now, &in)
@@ -120,6 +130,7 @@ func Run(ctx context.Context, o Options, g GitHub) (decision.Record, error) {
 	hotFiles(ctx, g, o, pr, now, w, &in)
 
 	res := score.Evaluate(in)
+	evRec := ev.record(o, in)
 
 	tiersSum := sha256.Sum256(tiersData)
 	rec := decision.Record{
@@ -136,6 +147,7 @@ func Run(ctx context.Context, o Options, g GitHub) (decision.Record, error) {
 		PathTier:        res.PathTier, Floors: res.Floors, Score: res.Score, ScoreItems: res.ScoreItems,
 		DetTier: res.DetTier, Inputs: res.Inputs, Unavailable: res.Unavailable,
 	}
+	rec.Evidence = evRec
 	if err := attest(ctx, g, o, cfg, pr, &rec); err != nil {
 		return decision.Record{}, err
 	}
@@ -234,10 +246,14 @@ func optionalSignals(o Options, in *score.Input) error {
 		if err != nil {
 			return err
 		}
-		d := head - base
-		in.CoverageDelta = &d
+		in.CoverageDelta = coverageDelta(base, head)
 	}
 	return nil
+}
+
+func coverageDelta(base, head float64) *float64 {
+	d := head - base
+	return &d
 }
 
 func readPercent(p string) (float64, error) {

@@ -409,6 +409,131 @@
           "type": "string"
         }
       }
+    },
+    "evidence": {
+      "description": "Optional. Present only when the repo's tier file has an evidence block. Never changes score, floors or tier unless applied is true.",
+      "type": "object",
+      "required": [
+        "source",
+        "applied",
+        "status",
+        "skip_reason"
+      ],
+      "properties": {
+        "source": {
+          "enum": [
+            "compute",
+            "artifact"
+          ]
+        },
+        "applied": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "skipped"
+          ]
+        },
+        "skip_reason": {
+          "enum": [
+            "not_configured",
+            "compute_failed",
+            "artifact_missing",
+            "artifact_timeout",
+            "parse_error",
+            null
+          ]
+        },
+        "coverage_base": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "coverage_head": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "api_break": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "generated_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "evidence_sha256": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "would_score": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "would_det_tier": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/tier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "would_floors": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "required": [
+              "rule",
+              "tier"
+            ],
+            "properties": {
+              "rule": {
+                "enum": [
+                  "tier2_path",
+                  "control_file",
+                  "sast_new_high",
+                  "dep_manifest_human",
+                  "api_break",
+                  "revert_or_hotfix",
+                  "first_time_contributor",
+                  "file_list_incomplete"
+                ]
+              },
+              "tier": {
+                "$ref": "#/$defs/tier"
+              },
+              "detail": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {

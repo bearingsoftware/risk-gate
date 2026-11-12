@@ -28,6 +28,20 @@ release:
 attestation:                     # only read in mode=enforce
   label: tier2-self-reviewed
   permitted: ["chattersley"]
+evidence:                        # optional; absent = off, decisions are byte-identical to before
+  source: compute                # compute | artifact
+  apply: false                   # default false: record only, never affects score, floors or tier
+  compute:                       # source compute: risk-gate runs a pinned `ctf evidence` over base and head
+    package: "@bearingsoftware/component-test-framework@0.3.16"  # exact version, required
+    specs: ["examples/api/openapi.yaml"]       # required, at least one
+    features: ["examples/api/features"]        # required, at least one
+    map: ""                      # optional, --map
+    allowlist: ""                # optional, --allowlist (ctf reads it from the base itself)
+    base_path: ""                # optional, --base-path (a URL path such as /v1)
+  artifact:                      # source artifact: download the consumer CI's ctf-evidence artifact
+    name: ctf-evidence           # default ctf-evidence
+    workflow: ci.yml             # required: the workflow file whose run for the head SHA uploads it
+    wait_seconds: 600            # default 600, max 1800
 ```
 
 Rules:
@@ -41,3 +55,12 @@ Rules:
 - `.github/review-tiers.yml`, `.github/CODEOWNERS` and `.github/workflows/**` must be tier 2;
   risk-gate adds them as `control_file` floors even if the file forgets them.
 - CODEOWNERS must list every tier 2 glob. `risk-gate lint-tiers` fails when they differ.
+
+`evidence` rules (each violation is fatal, like the other blocks):
+
+- `source` must be `compute` or `artifact`. Only the block for the chosen source is read.
+- `compute` needs `package`, `specs` and `features`. `package` must be `name@x.y.z` (a scoped name is fine): no range, no tag.
+- `artifact` needs `workflow`, a bare file name such as `ci.yml`. `wait_seconds` is 0 (default) to 1800.
+- Paths (`specs`, `features`, `map`, `allowlist`) are relative, contain no `..`, start with no `-`, and use only
+  `A-Z a-z 0-9 . _ / -`. The values reach `$GITHUB_OUTPUT` and a shell, so none can hold a quote, space, `=` or newline.
+- `risk-gate evidence-plan --tiers <file>` prints the `key=value` lines the workflow reads; `source=off` when absent.
