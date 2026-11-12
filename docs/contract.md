@@ -79,12 +79,32 @@ review tier next to the deterministic one. It is never used by the gate.
 - The job never writes to the PR (no comments, labels or `pull-requests: write`). The record is also
   uploaded as the workflow artifact `risk-ai` (14 days).
 
+## Evidence (optional `evidence` block)
+
+An additive optional field of decision/v1 (nothing bumped; FINCH-549). It is present only when the repo's tier
+file has an `evidence` block; without one the record is byte-identical to before. Fields:
+`source` (`compute` | `artifact`), `applied`, `status` (`ok` | `skipped`), `skip_reason` (`null` or
+`not_configured`, `compute_failed`, `artifact_missing`, `artifact_timeout`, `parse_error`), `coverage_base`,
+`coverage_head`, `api_break`, `generated_by`, `evidence_sha256`, and what the decision would have been had the
+evidence been applied: `would_score`, `would_det_tier`, `would_floors`. All but the first four are `null` on a skip.
+
+- During the trial `applied` is `false`: the evidence is recorded only. `score`, `floors` and `det_tier` are
+  exactly what they would be without it, and `inputs.coverage_delta` / `inputs.api_break` stay `null` and in
+  `unavailable`. Compare `would_*` with the real values to see what enforcing would change.
+- When `applied` is `true` the evidence feeds `inputs.coverage_delta` and `inputs.api_break` through the scorer's
+  usual path, and `would_*` equals the record's own `score`, `floors` and `det_tier`.
+- A skip is a row, never a failure and never a 0.
+- `evidence_sha256` covers the `evidence.json` file written by `ctf evidence`.
+- Unknown extra fields: ignore, as everywhere else. `schema/decision.v1.json` sets no `additionalProperties`
+  restriction, so a consumer that has not learned the block still accepts the record.
+
 ## Reusable workflow
 
 Consumers call `.github/workflows/risk-gate.yml` (`on: workflow_call`). Inputs: `runs-on` (JSON array of
 labels), `mode` (default `shadow`), `weights-version` (default `"2"`, embedded in the binary), `risk-gate-ref`
 (the commit SHA the caller pinned `uses:` to; the binary is installed from it). Optional secret
-`anthropic-api-key` enables the AI benchmark; without it the `classify` job records a `no_key` skip. See the README.
+`anthropic-api-key` enables the AI benchmark; without it the `classify` job records a `no_key` skip. The `score`
+job also requests `packages: read` and `actions: read` for the evidence block; callers must grant both. See the README.
 
 ## Changing the contract
 
