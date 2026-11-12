@@ -24,7 +24,7 @@ func main() {
 
 func execute(args []string, stdout, stderr io.Writer, getenv func(string) string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: risk-gate score|classify|lint-tiers [flags]")
+		fmt.Fprintln(stderr, "usage: risk-gate score|classify|lint-tiers|evidence-plan [flags]")
 		return 2
 	}
 	var err error
@@ -35,6 +35,8 @@ func execute(args []string, stdout, stderr io.Writer, getenv func(string) string
 		err = classifyCmd(args[1:], stdout, stderr, getenv)
 	case "lint-tiers":
 		err = lintTiers(args[1:], stdout)
+	case "evidence-plan":
+		err = evidencePlan(args[1:], stdout)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n", args[0])
 		return 2
@@ -79,6 +81,26 @@ func lintTiers(args []string, stdout io.Writer) error {
 	return nil
 }
 
+func evidencePlan(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("evidence-plan", flag.ContinueOnError)
+	tiersPath := fs.String("tiers", ".github/review-tiers.yml", "tiers file")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(*tiersPath)
+	if err != nil {
+		return fmt.Errorf("reading tiers file: %w", err)
+	}
+	cfg, err := tiers.Parse(data)
+	if err != nil {
+		return err
+	}
+	for _, l := range cfg.Evidence.Plan() {
+		fmt.Fprintln(stdout, l)
+	}
+	return nil
+}
+
 func score(args []string, stdout, stderr io.Writer, getenv func(string) string) error {
 	fs := flag.NewFlagSet("score", flag.ContinueOnError)
 	var o run.Options
@@ -93,6 +115,10 @@ func score(args []string, stdout, stderr io.Writer, getenv func(string) string) 
 	fs.StringVar(&o.CoverageBase, "coverage-base", "", "file holding the base coverage percent")
 	fs.StringVar(&o.CoverageHead, "coverage-head", "", "file holding the head coverage percent")
 	apiBreak := fs.String("api-break", "", "true or false when an API-break check ran")
+	fs.StringVar(&o.EvidenceDir, "evidence-dir", "", "directory holding the ctf evidence files")
+	fs.StringVar(&o.EvidenceSource, "evidence-source", "", "compute or artifact; turns the evidence record on")
+	fs.BoolVar(&o.EvidenceApply, "evidence-apply", false, "feed the evidence into the score; default records it only")
+	fs.StringVar(&o.EvidenceError, "evidence-error", "", "skip reason when evidence could not be produced")
 	out := fs.String("out", "", "write the decision JSON here")
 	fs.BoolVar(&o.Publish, "publish", false, "create the risk-gate check run")
 	fs.BoolVar(&o.Label, "label", false, "set the single risk:tier-N label on the PR")
@@ -107,6 +133,15 @@ func score(args []string, stdout, stderr io.Writer, getenv func(string) string) 
 	}
 	if (o.CoverageBase == "") != (o.CoverageHead == "") {
 		return fmt.Errorf("--coverage-base and --coverage-head must be given together")
+	}
+	if o.EvidenceSource != "" && o.EvidenceSource != "compute" && o.EvidenceSource != "artifact" {
+		return fmt.Errorf("--evidence-source must be compute or artifact")
+	}
+	if o.EvidenceSource == "" && (o.EvidenceDir != "" || o.EvidenceApply || o.EvidenceError != "") {
+		return fmt.Errorf("--evidence-dir, --evidence-apply and --evidence-error need --evidence-source")
+	}
+	if o.EvidenceError != "" && !run.ValidSkipReason(o.EvidenceError) {
+		return fmt.Errorf("--evidence-error %q is not a known skip reason", o.EvidenceError)
 	}
 	if *apiBreak != "" {
 		b, err := strconv.ParseBool(*apiBreak)

@@ -144,3 +144,57 @@ func TestClassifyArgErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestEvidencePlanCmd(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, tiers, want string
+		code              int
+	}{
+		{"absent", tiersDoc, "source=off\n", 0},
+		{"artifact", tiersDoc + "evidence:\n  source: artifact\n  artifact:\n    workflow: ci.yml\n",
+			"source=artifact\napply=false\nname=ctf-evidence\nworkflow=ci.yml\nwait_seconds=600\n", 0},
+		{"compute", tiersDoc + "evidence:\n  source: compute\n  apply: true\n  compute:\n    package: \"x@1.2.3\"\n    specs: [a.yaml, b.yaml]\n    features: [f]\n",
+			"source=compute\napply=true\npackage=x@1.2.3\nspecs=a.yaml,b.yaml\nfeatures=f\nmap=\nallowlist=\nbase_path=\n", 0},
+		{"invalid block is fatal", tiersDoc + "evidence:\n  source: nope\n", "", 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := filepath.Join(t.TempDir(), "tiers.yml")
+			if err := os.WriteFile(p, []byte(tc.tiers), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var out, errb bytes.Buffer
+			if code := execute([]string{"evidence-plan", "--tiers", p}, &out, &errb, os.Getenv); code != tc.code {
+				t.Fatalf("exit %d (%s)", code, errb.String())
+			}
+			if out.String() != tc.want {
+				t.Fatalf("stdout = %q, want %q", out.String(), tc.want)
+			}
+		})
+	}
+	var out, errb bytes.Buffer
+	if code := execute([]string{"evidence-plan", "--tiers", "/nonexistent"}, &out, &errb, os.Getenv); code != 1 {
+		t.Fatalf("missing file: exit %d", code)
+	}
+}
+
+func TestScoreEvidenceFlagErrors(t *testing.T) {
+	t.Parallel()
+	env := func(string) string { return "tok" }
+	base := []string{"score", "--repo", "o/r", "--pr", "1"}
+	for name, extra := range map[string][]string{
+		"bad source":         {"--evidence-source", "magic"},
+		"dir without source": {"--evidence-dir", "d"},
+		"apply no source":    {"--evidence-apply"},
+		"error no source":    {"--evidence-error", "compute_failed"},
+		"unknown reason":     {"--evidence-source", "compute", "--evidence-error", "boom"},
+		"not_configured set": {"--evidence-source", "compute", "--evidence-error", "not_configured"},
+	} {
+		var out, errb bytes.Buffer
+		if code := execute(append(append([]string{}, base...), extra...), &out, &errb, env); code != 1 || !strings.Contains(errb.String(), "evidence") {
+			t.Errorf("%s: exit %d stderr %q", name, code, errb.String())
+		}
+	}
+}
