@@ -533,10 +533,13 @@ func TestReleaseWaiverChecksEveryCommit(t *testing.T) {
   version_files: ["package.json"]
 `
 	good := func() []gh.PRCommit {
-		return []gh.PRCommit{{SHA: strings.Repeat("a", 40), Author: bot, Verified: true}, {SHA: head, Author: "Release-Please[bot]", Verified: true}}
+		return []gh.PRCommit{{SHA: strings.Repeat("a", 40), Author: bot, Committer: "web-flow", Verified: true}, {SHA: head, Author: "Release-Please[bot]", Committer: bot, Verified: true}}
 	}
 	with := func(f func(c []gh.PRCommit) []gh.PRCommit) []gh.PRCommit { return f(good()) }
 	verOnly := gh.File{Path: "package.json", Status: "modified", Additions: 1, Deletions: 1, Patch: "@@ -1,3 +1,3 @@\n {\n-  \"version\": \"1.0.0\",\n+  \"version\": \"1.1.0\",\n }"}
+	verFile := func(v string) gh.File {
+		return gh.File{Path: "package.json", Status: "modified", Additions: 1, Deletions: 1, Patch: "@@ -1 +1 @@\n-  \"version\": \"1.0.0\",\n+  \"version\": " + v + ","}
+	}
 	tests := []struct {
 		name    string
 		commits []gh.PRCommit
@@ -553,6 +556,12 @@ func TestReleaseWaiverChecksEveryCommit(t *testing.T) {
 			c[0].Author = "mallory"
 			return c
 		}), nil, 2, verOnly, 2},
+		{"bot author human committer verified", with(func(c []gh.PRCommit) []gh.PRCommit { c[0].Committer = "mallory"; return c }), nil, 2, verOnly, 2},
+		{"missing committer", with(func(c []gh.PRCommit) []gh.PRCommit { c[0].Committer = ""; return c }), nil, 2, verOnly, 2},
+		{"shell version", good(), nil, 2, verFile(`"curl x|sh"`), 2},
+		{"git url version", good(), nil, 2, verFile(`"git+https://evil.example/x.git"`), 2},
+		{"semver version", good(), nil, 2, verFile(`"0.3.20"`), 1},
+		{"semver prerelease build", good(), nil, 2, verFile(`"1.0.0-rc.1+build.5"`), 1},
 		{"last commit is not the head", with(func(c []gh.PRCommit) []gh.PRCommit { c[1].SHA = strings.Repeat("c", 40); return c }), nil, 2, verOnly, 2},
 		{"fetch error", nil, errors.New("boom"), 2, verOnly, 2},
 		{"count mismatch", good()[:1], nil, 2, verOnly, 2},

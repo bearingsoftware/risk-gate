@@ -579,7 +579,8 @@ func TestReleaseOnlyWaivesTier2PathFloor(t *testing.T) {
 	doc := strings.Replace(tiersYAML, `paths: ["backend/internal/auth/**", "infra/**"]`, `paths: ["backend/internal/auth/**", "infra/**", ".release-please-manifest.json"]`, 1)
 	relCfg := strings.Replace(doc, `heads: ["develop", "release-please--*"]`, `heads: ["develop", "release-please--*"]
   author: "Release-Please[bot]"
-  paths: [".release-please-manifest.json", "CHANGELOG.md", "**/CHANGELOG.md", "package.json", "package-lock.json"]`, 1)
+  paths: [".release-please-manifest.json", "CHANGELOG.md", "**/CHANGELOG.md", "package.json", "package-lock.json"]
+  version_files: ["package.json", "package-lock.json"]`, 1)
 	noAuthor := strings.Replace(relCfg, `author: "Release-Please[bot]"`, `author: ""`, 1)
 	manifest := File{Path: ".release-please-manifest.json", Status: "modified", Additions: 1, Deletions: 1}
 	changelog := File{Path: "pkg/CHANGELOG.md", Status: "modified", Additions: 3}

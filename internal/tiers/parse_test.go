@@ -111,11 +111,16 @@ func TestParseReleaseAuthorAndPaths(t *testing.T) {
 		{"bad glob", "  author: a[bot]\n  paths: [\"[\"]\n"},
 		{"negated", "  author: a[bot]\n  paths: [\"!x\"]\n"},
 		{"empty path", "  author: a[bot]\n  paths: [\"\"]\n"},
+		{"manifest not in version_files", "  author: a[bot]\n  paths: [package.json]\n"},
+		{"nested manifest not in version_files", "  author: a[bot]\n  paths: [\"**/go.mod\"]\n  version_files: [go.mod]\n"},
 		{"space in author", "  author: \"a b\"\n  paths: [x]\n"},
 	} {
 		if _, err := Parse([]byte(head + tc.body)); err == nil {
 			t.Errorf("%s: want error", tc.name)
 		}
+	}
+	if _, err := Parse([]byte(head + "  author: a[bot]\n  paths: [package.json]\n  version_files: [package.json]\n")); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := Parse([]byte(head + "  author: a[bot]\n  paths: [CHANGELOG.md]\n")); err != nil {
 		t.Fatal(err)
