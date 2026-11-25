@@ -651,3 +651,52 @@ func TestBroadReleaseGlobNeverWaivesManifest(t *testing.T) {
 		t.Fatalf("det %d floors %v", r.DetTier, floorRules(r))
 	}
 }
+
+func TestVersionBumpShape(t *testing.T) {
+	t.Parallel()
+	doc := strings.Replace(strings.Replace(tiersYAML, `"infra/**"]`, `"infra/**", "package.json", "package-lock.json", ".release-please-manifest.json"]`, 1), `release-please--*"]`, `release-please--*"]
+  author: "release-please[bot]"
+  paths: ["package.json", "package-lock.json", ".release-please-manifest.json"]
+  version_files: ["package.json", "package-lock.json"]`, 1)
+	pair := func(o, n string) string { return "-  \"version\": \"" + o + "\",\n+  \"version\": \"" + n + "\"," }
+	patch := func(body string, add, del int, path string) File {
+		return File{Path: path, Status: "modified", Additions: add, Deletions: del, Patch: "@@ -1 +1 @@\n" + body}
+	}
+	pkg := func(o, n string) File { return patch(pair(o, n), 1, 1, "package.json") }
+	lock := func(pairs int, o, n string) File {
+		body := pair(o, n)
+		for i := 1; i < pairs; i++ {
+			body += "\n context\n" + pair(o, n)
+		}
+		return patch(body, pairs, pairs, "package-lock.json")
+	}
+	man := func(v string) File {
+		return File{Path: ".release-please-manifest.json", Status: "modified", Additions: 1, Deletions: 1, Patch: "@@ -1 +1 @@\n-  \".\": \"0.3.19\"\n+  \".\": \"" + v + "\""}
+	}
+	tests := []struct {
+		name  string
+		files []File
+		want  int
+	}{
+		{"real-shaped release", []File{man("0.3.20"), pkg("0.3.19", "0.3.20"), lock(2, "0.3.19", "0.3.20")}, 1},
+		{"lone added version line", []File{patch("+  \"version\": \"1.0.0\",", 1, 0, "package.json")}, 2},
+		{"two pairs in package.json", []File{patch(pair("0.3.19", "0.3.20")+"\n context\n"+pair("0.3.19", "0.3.20"), 2, 2, "package.json")}, 2},
+		{"three lockfile pairs", []File{pkg("0.3.19", "0.3.20"), lock(3, "0.3.19", "0.3.20")}, 2},
+		{"lockfile bumps a different version", []File{pkg("0.3.19", "0.3.20"), lock(2, "0.3.19", "0.3.21")}, 2},
+		{"no-op bump", []File{pkg("0.3.20", "0.3.20")}, 2},
+		{"manifest disagrees", []File{man("0.4.0"), pkg("0.3.19", "0.3.20")}, 2},
+		{"pair not adjacent", []File{patch("-  \"version\": \"0.3.19\",\n context\n+  \"version\": \"0.3.20\",", 1, 1, "package.json")}, 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			in := base(t)
+			in.Tiers = mustTiers(t, doc)
+			in.Author, in.AuthorBot, in.HeadRef, in.ReleaseCommitsVerified = "release-please[bot]", true, "release-please--branches--main", true
+			in.Files = tc.files
+			if r := Evaluate(in); r.DetTier != tc.want {
+				t.Fatalf("det %d floors %v, want %d", r.DetTier, floorRules(r), tc.want)
+			}
+		})
+	}
+}
