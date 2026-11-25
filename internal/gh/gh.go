@@ -35,6 +35,7 @@ type PullRequest struct {
 	HeadRef      string
 	HeadSHA      string
 	ChangedFiles int
+	Commits      int
 	Fork         bool
 }
 
@@ -231,6 +232,7 @@ func (c *Client) PullRequest(ctx context.Context, n int) (PullRequest, error) {
 			} `json:"repo"`
 		} `json:"head"`
 		ChangedFiles int `json:"changed_files"`
+		Commits      int `json:"commits"`
 	}
 	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/pulls/%d", c.Repo, n), nil, &raw); err != nil {
 		return PullRequest{}, err
@@ -239,7 +241,7 @@ func (c *Client) PullRequest(ctx context.Context, n int) (PullRequest, error) {
 		Number: raw.Number, Title: raw.Title, Body: raw.Body,
 		Author: raw.User.Login, AuthorBot: raw.User.Type == "Bot" || strings.HasSuffix(raw.User.Login, "[bot]"),
 		BaseRef: raw.Base.Ref, BaseSHA: raw.Base.SHA, HeadRef: raw.Head.Ref, HeadSHA: raw.Head.SHA,
-		ChangedFiles: raw.ChangedFiles, Labels: []string{},
+		ChangedFiles: raw.ChangedFiles, Commits: raw.Commits, Labels: []string{},
 		Fork: raw.Head.Repo == nil || raw.Base.Repo == nil || raw.Head.Repo.FullName != raw.Base.Repo.FullName,
 	}
 	for _, l := range raw.Labels {
@@ -306,6 +308,37 @@ func (c *Client) AuthorCommits(ctx context.Context, login, branch string, since 
 		}
 	}
 	return min(n, max), nil
+}
+
+// MaxPRCommits is the most commits the pulls/{n}/commits endpoint will list.
+const MaxPRCommits = 250
+
+// PRCommitAuthors returns the GitHub author login of every commit on the PR, "" where a
+// commit has no linked GitHub account.
+func (c *Client) PRCommitAuthors(ctx context.Context, n int) ([]string, error) {
+	var out []string
+	for page := 1; page <= MaxPRCommits/perPage+1; page++ {
+		var batch []struct {
+			Author *struct {
+				Login string `json:"login"`
+			} `json:"author"`
+		}
+		p := fmt.Sprintf("/repos/%s/pulls/%d/commits?per_page=%d&page=%d", c.Repo, n, perPage, page)
+		if err := c.do(ctx, http.MethodGet, p, nil, &batch); err != nil {
+			return nil, err
+		}
+		for _, b := range batch {
+			if b.Author == nil {
+				out = append(out, "")
+			} else {
+				out = append(out, b.Author.Login)
+			}
+		}
+		if len(batch) < perPage {
+			break
+		}
+	}
+	return out, nil
 }
 
 // RecentMergedPRs returns the file lists of PRs merged into branch since the given time,

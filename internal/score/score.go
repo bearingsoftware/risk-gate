@@ -29,6 +29,8 @@ type Input struct {
 	Files     []File
 	// FileListIncomplete is set when GitHub reported more changed files than it returned.
 	FileListIncomplete bool
+	// ReleaseCommitsVerified is set by the caller once every PR commit is authored by release.author.
+	ReleaseCommitsVerified bool
 
 	SastNewHigh          *int
 	CoverageDelta        *float64
@@ -122,7 +124,7 @@ func Evaluate(in Input) Result {
 		Files:  make([]decision.File, 0, len(in.Files)),
 	}
 	dirs := map[string]bool{}
-	var tier2Path, control, manifest, floorManifest string
+	var tier2Path, control, manifest, floorManifest, waived string
 	allTier0OrManifest := len(in.Files) > 0
 	allTier0 := len(in.Files) > 0
 
@@ -133,7 +135,7 @@ func Evaluate(in Input) Result {
 			changed = append(changed, f.PreviousPath)
 		}
 	}
-	releaseOnly := !in.FileListIncomplete && cfg.ReleaseOnly(in.HeadRef, in.Author, changed)
+	releaseOnly := in.ReleaseCommitsVerified && !in.FileListIncomplete && cfg.ReleaseOnly(in.HeadRef, in.Author, changed)
 
 	for _, f := range in.Files {
 		tier := cfg.Tier(f.Path)
@@ -142,6 +144,10 @@ func Evaluate(in Input) Result {
 		}
 		if releaseOnly && tier == 2 && !isControl(f.Path) && (f.PreviousPath == "" || !isControl(f.PreviousPath)) {
 			tier = cfg.DefaultTier
+			if waived != "" {
+				waived += ", "
+			}
+			waived += f.Path
 		}
 		if in.AuthorBot && cfg.IsBotAuthor(in.Author) && isManifest(f.Path) && tier != 2 {
 			tier = 0
@@ -219,6 +225,9 @@ func Evaluate(in Input) Result {
 
 	if tier2Path != "" {
 		floor("tier2_path", 2, tier2Path)
+	}
+	if waived != "" {
+		floor("tier2_path_waived", 0, "release-only diff by "+in.Author+": "+waived)
 	}
 	if control != "" {
 		floor("control_file", 2, control)
