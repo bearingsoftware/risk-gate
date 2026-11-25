@@ -26,7 +26,8 @@ tiers:
 release:
   heads: ["develop", "release-please--*"]   # head refs whose PRs are lane=release
   author: "release-please[bot]"             # optional; with paths, waives tier2_path for release-only diffs
-  paths: [".release-please-manifest.json", "**/CHANGELOG.md", "package.json", "package-lock.json"]
+  paths: [".release-please-manifest.json", "CHANGELOG.md", "package.json", "package-lock.json"]
+  version_files: ["package.json", "package-lock.json"]   # release paths whose diff may change "version" lines only
 attestation:                     # only read in mode=enforce
   label: tier2-self-reviewed
   permitted: ["chattersley"]
@@ -63,9 +64,17 @@ Rules:
 - The `tier2_path` floor is waived only when the head ref matches `release.heads`, the PR author login equals
   `release.author` (exact, case-insensitive; a branch name alone is pushable by anyone), and every changed
   file, plus the old path of every rename, matches `release.paths`. Either key empty or absent turns this off.
-- Every commit on the PR must also have a GitHub author login equal to `release.author` (fetched only
-  when the other conditions hold). A fetch error, an unlinked commit author, a commit count that differs
-  from the PR's, or more than 250 commits means no waiver. `cmd/replay` supplies no commit data, so it never waives.
+- `release.paths` and `release.version_files` match the whole path, anchored: a pattern without a slash is a
+  root-level file of that exact name (`package.json` does not match `schema/package.json`), `**/X` matches `X`
+  at any depth, and a directory never satisfies a file pattern. This differs from the tier globs.
+- Every commit on the PR must have a GitHub author login equal to `release.author` **and** a verified
+  signature (`commit.verification.verified`; the author login follows a settable email, so alone it proves
+  nothing), and the last commit must be the PR head the files were read at. A fetch error, an unlinked
+  author, an unverified commit, a commit count that differs from the PR's, or more than 250 commits means no
+  waiver. The fetch happens only when the other conditions hold. `cmd/replay` supplies no commit data, so it never waives.
+- A changed file matching `release.version_files` needs its patch present and complete, and every added or
+  removed line must be `"version": "..."`. Any other line, or a missing or truncated patch, means no waiver.
+  Without this a bot-authored `package.json` could carry a new script or dependency (`dep_manifest_human` exempts bots).
 - Only `tier2_path` is waived. `control_file`, `dep_manifest_human` and every other floor apply as before.
 - Waived files count at `default_tier` in `path_tier`. The decision carries a tier 0 floor
   `tier2_path_waived` whose detail reads `release-only diff by <author>: <waived paths>`.
