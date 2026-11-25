@@ -33,7 +33,7 @@ type BotConditions struct {
 	RequireProvenance bool   `yaml:"require_provenance"`
 }
 
-// codeManifests are file names whose content can add dependencies or run code, so a release path
+// codeManifests are file names (keep in step with score.isCodeManifest and score.depManifests) whose content can add dependencies or run code, so a release path
 // naming one must be restricted to version-only diffs.
 var codeManifests = map[string]bool{
 	"package.json": true, "package-lock.json": true, "pnpm-lock.yaml": true, "yarn.lock": true,
@@ -165,6 +165,9 @@ func (c *Config) ReleaseOnly(headRef, author string, files []string) bool {
 	}
 	return true
 }
+
+// IsCodeManifest reports whether the last segment of p names a dependency manifest.
+func IsCodeManifest(p string) bool { return codeManifests[path.Base(p)] }
 
 // IsVersionFile reports whether a release path must change version lines only.
 func (c *Config) IsVersionFile(p string) bool {

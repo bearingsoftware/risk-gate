@@ -97,8 +97,14 @@ func ReleaseDiffOK(cfg *tiers.Config, headRef, author string, files []File, inco
 		return false
 	}
 	for _, f := range files {
-		if (cfg.IsVersionFile(f.Path) || (f.PreviousPath != "" && cfg.IsVersionFile(f.PreviousPath))) && !versionOnlyPatch(f) {
-			return false
+		for _, p := range []string{f.Path, f.PreviousPath} {
+			if p == "" {
+				continue
+			}
+			// A manifest is never waived on release.paths alone, however broad the glob.
+			if (cfg.IsVersionFile(p) || tiers.IsCodeManifest(p)) && !(cfg.IsVersionFile(p) && versionOnlyPatch(f)) {
+				return false
+			}
 		}
 	}
 	return true
@@ -135,6 +141,7 @@ func isManifest(p string) bool { return depManifests[path.Base(p)] }
 
 func isLockfile(p string) bool { return lockfiles[path.Base(p)] }
 
+// isCodeManifest and tiers.codeManifests are two lists of manifest names; keep them in step.
 func isCodeManifest(p string) bool { return isManifest(p) && !isLockfile(p) }
 
 func isTest(p string) bool {
