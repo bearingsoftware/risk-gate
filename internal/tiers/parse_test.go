@@ -103,3 +103,21 @@ func TestMissingFromCodeowners(t *testing.T) {
 		t.Fatalf("missing = %v", got)
 	}
 }
+
+func TestParseReleaseAuthorAndPaths(t *testing.T) {
+	t.Parallel()
+	const head = "version: 1\nowner: x\ndefault_tier: 1\nrelease:\n"
+	for _, tc := range []struct{ name, body string }{
+		{"bad glob", "  author: a[bot]\n  paths: [\"[\"]\n"},
+		{"negated", "  author: a[bot]\n  paths: [\"!x\"]\n"},
+		{"empty path", "  author: a[bot]\n  paths: [\"\"]\n"},
+		{"space in author", "  author: \"a b\"\n  paths: [x]\n"},
+	} {
+		if _, err := Parse([]byte(head + tc.body)); err == nil {
+			t.Errorf("%s: want error", tc.name)
+		}
+	}
+	if _, err := Parse([]byte(head + "  author: a[bot]\n  paths: [CHANGELOG.md]\n")); err != nil {
+		t.Fatal(err)
+	}
+}

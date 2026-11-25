@@ -573,3 +573,49 @@ func TestMappingV2Threshold(t *testing.T) {
 		})
 	}
 }
+
+func TestReleaseOnlyWaivesTier2PathFloor(t *testing.T) {
+	t.Parallel()
+	doc := strings.Replace(tiersYAML, `paths: ["backend/internal/auth/**", "infra/**"]`, `paths: ["backend/internal/auth/**", "infra/**", ".release-please-manifest.json"]`, 1)
+	relCfg := strings.Replace(doc, `heads: ["develop", "release-please--*"]`, `heads: ["develop", "release-please--*"]
+  author: "Release-Please[bot]"
+  paths: [".release-please-manifest.json", "CHANGELOG.md", "**/CHANGELOG.md", "package.json", "package-lock.json"]`, 1)
+	noAuthor := strings.Replace(relCfg, `author: "Release-Please[bot]"`, `author: ""`, 1)
+	manifest := File{Path: ".release-please-manifest.json", Status: "modified", Additions: 1, Deletions: 1}
+	changelog := File{Path: "pkg/CHANGELOG.md", Status: "modified", Additions: 3}
+	tests := []struct {
+		name      string
+		cfg       string
+		author    string
+		bot       bool
+		head      string
+		files     []File
+		wantTier  int
+		wantFloor bool
+	}{
+		{"release author release paths only", relCfg, "release-please[bot]", true, "release-please--branches--main", []File{manifest, changelog}, 1, false},
+		{"human author same branch", relCfg, "mallory", false, "release-please--branches--main", []File{manifest, changelog}, 2, true},
+		{"release author extra src file", relCfg, "release-please[bot]", true, "release-please--branches--main", []File{manifest, lines("src/a.go", 1)}, 2, true},
+		{"release author extra tier2 file", relCfg, "release-please[bot]", true, "release-please--branches--main", []File{manifest, lines("infra/main.tf", 1)}, 2, true},
+		{"release author control file", relCfg, "release-please[bot]", true, "release-please--branches--main", []File{manifest, lines(".github/workflows/ci.yml", 1)}, 2, true},
+		{"release author non-release head", relCfg, "release-please[bot]", true, "feat/x", []File{manifest}, 2, true},
+		{"feature off without author", noAuthor, "release-please[bot]", true, "release-please--branches--main", []File{manifest, changelog}, 2, true},
+		{"feature off without release.paths", doc, "release-please[bot]", true, "release-please--branches--main", []File{manifest}, 2, true},
+		{"rename from non-release path", relCfg, "release-please[bot]", true, "release-please--branches--main", []File{manifest, {Path: "CHANGELOG.md", PreviousPath: "infra/notes.txt", Status: "renamed"}}, 2, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			in := base(t)
+			in.Tiers = mustTiers(t, tc.cfg)
+			in.Author, in.AuthorBot, in.HeadRef, in.Files = tc.author, tc.bot, tc.head, tc.files
+			r := Evaluate(in)
+			if r.DetTier != tc.wantTier || slices.Contains(floorRules(r), "tier2_path") != tc.wantFloor {
+				t.Fatalf("det = %d floors = %v, want tier %d tier2_path=%v", r.DetTier, floorRules(r), tc.wantTier, tc.wantFloor)
+			}
+			if tc.head != "feat/x" && r.Lane != "release" {
+				t.Fatalf("lane = %s", r.Lane)
+			}
+		})
+	}
+}
