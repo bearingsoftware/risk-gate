@@ -126,10 +126,22 @@ func Evaluate(in Input) Result {
 	allTier0OrManifest := len(in.Files) > 0
 	allTier0 := len(in.Files) > 0
 
+	var changed []string
+	for _, f := range in.Files {
+		changed = append(changed, f.Path)
+		if f.PreviousPath != "" {
+			changed = append(changed, f.PreviousPath)
+		}
+	}
+	releaseOnly := !in.FileListIncomplete && cfg.ReleaseOnly(in.HeadRef, in.Author, changed)
+
 	for _, f := range in.Files {
 		tier := cfg.Tier(f.Path)
 		if f.PreviousPath != "" {
 			tier = max(tier, cfg.Tier(f.PreviousPath))
+		}
+		if releaseOnly && tier == 2 && !isControl(f.Path) && (f.PreviousPath == "" || !isControl(f.PreviousPath)) {
+			tier = cfg.DefaultTier
 		}
 		if in.AuthorBot && cfg.IsBotAuthor(in.Author) && isManifest(f.Path) && tier != 2 {
 			tier = 0

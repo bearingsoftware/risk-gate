@@ -33,7 +33,9 @@ type BotConditions struct {
 }
 
 type Release struct {
-	Heads []string `yaml:"heads"`
+	Heads  []string `yaml:"heads"`
+	Author string   `yaml:"author"`
+	Paths  []string `yaml:"paths"`
 }
 
 type AttestationConfig struct {
@@ -69,6 +71,14 @@ func Parse(data []byte) (*Config, error) {
 		if _, err := path.Match(h, ""); err != nil {
 			return nil, fmt.Errorf("tiers file: release.heads: invalid pattern %q", h)
 		}
+	}
+	for _, p := range c.Release.Paths {
+		if p == "" || strings.HasPrefix(p, "!") || !validGlob(p) {
+			return nil, fmt.Errorf("tiers file: release.paths: invalid glob %q", p)
+		}
+	}
+	if a := c.Release.Author; a != strings.TrimSpace(a) || strings.ContainsAny(a, " \t\n") {
+		return nil, fmt.Errorf("tiers file: release.author: invalid login %q", a)
 	}
 	if a := c.Attestation; a != nil && a.Label == "" {
 		return nil, fmt.Errorf("tiers file: attestation.label is required")
@@ -117,6 +127,28 @@ func (c *Config) IsReleaseHead(ref string) bool {
 		}
 	}
 	return false
+}
+
+// ReleaseOnly reports whether a release-head PR by release.author changes only release.paths,
+// the one case where the tier2_path floor is waived. Either setting empty turns it off.
+func (c *Config) ReleaseOnly(headRef, author string, files []string) bool {
+	r := c.Release
+	if r.Author == "" || len(r.Paths) == 0 || len(files) == 0 || !strings.EqualFold(r.Author, author) || !c.IsReleaseHead(headRef) {
+		return false
+	}
+	for _, f := range files {
+		ok := false
+		for _, g := range r.Paths {
+			if Match(g, f) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // MissingFromCodeowners returns the tier 2 globs that no CODEOWNERS line lists as its pattern.
