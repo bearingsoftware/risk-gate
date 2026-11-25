@@ -96,45 +96,77 @@ func ReleaseDiffOK(cfg *tiers.Config, headRef, author string, files []File, inco
 	if !cfg.ReleaseOnly(headRef, author, changed) {
 		return false
 	}
+	var oldV, newV string
+	manifestPatch := ""
 	for _, f := range files {
+		if f.Path == ".release-please-manifest.json" {
+			manifestPatch = f.Patch
+		}
+		isVer := false
 		for _, p := range []string{f.Path, f.PreviousPath} {
 			if p == "" {
 				continue
 			}
 			// A manifest is never waived on release.paths alone, however broad the glob.
-			if (cfg.IsVersionFile(p) || tiers.IsCodeManifest(p)) && !(cfg.IsVersionFile(p) && versionOnlyPatch(f)) {
+			if tiers.IsCodeManifest(p) && !cfg.IsVersionFile(p) {
 				return false
 			}
+			isVer = isVer || cfg.IsVersionFile(p)
 		}
+		if !isVer {
+			continue
+		}
+		o, n, pairs, ok := versionPairs(f)
+		maxPairs := 2
+		if path.Base(f.Path) == "package.json" {
+			maxPairs = 1
+		}
+		if !ok || pairs > maxPairs || o == n || (oldV != "" && (o != oldV || n != newV)) {
+			return false
+		}
+		oldV, newV = o, n
+	}
+	if newV != "" && manifestPatch != "" {
+		found := false
+		for _, l := range strings.Split(manifestPatch, "\n") {
+			if strings.HasPrefix(l, "+") && strings.Contains(l, `"`+newV+`"`) {
+				found = true
+			}
+		}
+		return found
 	}
 	return true
 }
 
-var versionLine = regexp.MustCompile(`^\s*"version"\s*:\s*"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?"\s*,?\s*$`)
+var versionLine = regexp.MustCompile(`^\s*"version"\s*:\s*"(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)"\s*,?\s*$`)
 
-// versionOnlyPatch is false for a missing or truncated patch and for any changed line that is not a version line.
-func versionOnlyPatch(f File) bool {
+// versionPairs reads a version_file patch as adjacent "-version / +version" pairs of one bump.
+// ok is false for a missing or truncated patch, a lone or non-version changed line, or mixed bumps.
+func versionPairs(f File) (oldV, newV string, pairs int, ok bool) {
 	if f.Patch == "" {
-		return false
+		return "", "", 0, false
 	}
+	lines := strings.Split(f.Patch, "\n")
 	add, del := 0, 0
-	for _, l := range strings.Split(f.Patch, "\n") {
+	for i := 0; i < len(lines); i++ {
+		l := lines[i]
 		if l == "" || l[0] == ' ' || l[0] == '\\' || strings.HasPrefix(l, "@@") {
 			continue
 		}
-		switch l[0] {
-		case '+':
-			add++
-		case '-':
-			del++
-		default:
-			return false
+		if l[0] != '-' || i+1 >= len(lines) || lines[i+1] == "" || lines[i+1][0] != '+' {
+			return "", "", 0, false
 		}
-		if !versionLine.MatchString(l[1:]) {
-			return false
+		m1, m2 := versionLine.FindStringSubmatch(l[1:]), versionLine.FindStringSubmatch(lines[i+1][1:])
+		if m1 == nil || m2 == nil || (pairs > 0 && (m1[1] != oldV || m2[1] != newV)) {
+			return "", "", 0, false
 		}
+		oldV, newV = m1[1], m2[1]
+		pairs++
+		add++
+		del++
+		i++
 	}
-	return add == f.Additions && del == f.Deletions
+	return oldV, newV, pairs, pairs > 0 && add == f.Additions && del == f.Deletions
 }
 
 func isManifest(p string) bool { return depManifests[path.Base(p)] }
