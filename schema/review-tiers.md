@@ -25,6 +25,8 @@ tiers:
       require_provenance: false  # no provenance check exists here; recorded, not verified
 release:
   heads: ["develop", "release-please--*"]   # head refs whose PRs are lane=release
+  author: "release-please[bot]"             # optional; with paths, waives tier2_path for release-only diffs
+  paths: [".release-please-manifest.json", "**/CHANGELOG.md", "package.json", "package-lock.json"]
 attestation:                     # only read in mode=enforce
   label: tier2-self-reviewed
   permitted: ["chattersley"]
@@ -55,6 +57,15 @@ Rules:
 - `.github/review-tiers.yml`, `.github/CODEOWNERS` and `.github/workflows/**` must be tier 2;
   risk-gate adds them as `control_file` floors even if the file forgets them.
 - CODEOWNERS must list every tier 2 glob. `risk-gate lint-tiers` fails when they differ.
+
+`release.author` / `release.paths` rules:
+
+- The `tier2_path` floor is waived only when the head ref matches `release.heads`, the PR author login equals
+  `release.author` (exact, case-insensitive; a branch name alone is pushable by anyone), and every changed
+  file, plus the old path of every rename, matches `release.paths`. Either key empty or absent turns this off.
+- Only `tier2_path` is waived. `control_file`, `dep_manifest_human` and every other floor apply as before.
+- Waived files count at `default_tier` in `path_tier`; the decision records no separate waiver marker
+  (schema/decision.v1.json is unchanged, pending sign-off).
 
 `evidence` rules (each violation is fatal, like the other blocks):
 
