@@ -45,6 +45,7 @@ type File struct {
 	Status       string
 	Additions    int
 	Deletions    int
+	Patch        string
 }
 
 type LabelEvent struct {
@@ -256,6 +257,7 @@ type rawFile struct {
 	Status           string `json:"status"`
 	Additions        int    `json:"additions"`
 	Deletions        int    `json:"deletions"`
+	Patch            string `json:"patch"`
 }
 
 func (c *Client) prFiles(ctx context.Context, n int) ([]rawFile, error) {
@@ -282,7 +284,7 @@ func (c *Client) Files(ctx context.Context, n int) ([]File, error) {
 	}
 	out := make([]File, len(raw))
 	for i, f := range raw {
-		out[i] = File{Path: f.Filename, PreviousPath: f.PreviousFilename, Status: f.Status, Additions: f.Additions, Deletions: f.Deletions}
+		out[i] = File{Path: f.Filename, PreviousPath: f.PreviousFilename, Status: f.Status, Additions: f.Additions, Deletions: f.Deletions, Patch: f.Patch}
 	}
 	return out, nil
 }
@@ -313,26 +315,38 @@ func (c *Client) AuthorCommits(ctx context.Context, login, branch string, since 
 // MaxPRCommits is the most commits the pulls/{n}/commits endpoint will list.
 const MaxPRCommits = 250
 
-// PRCommitAuthors returns the GitHub author login of every commit on the PR, "" where a
-// commit has no linked GitHub account.
-func (c *Client) PRCommitAuthors(ctx context.Context, n int) ([]string, error) {
-	var out []string
+// PRCommit is one commit on a PR. Author is "" when the commit has no linked GitHub account.
+type PRCommit struct {
+	SHA      string
+	Author   string
+	Verified bool
+}
+
+// PRCommits lists the PR's commits oldest first, as the endpoint returns them.
+func (c *Client) PRCommits(ctx context.Context, n int) ([]PRCommit, error) {
+	var out []PRCommit
 	for page := 1; page <= MaxPRCommits/perPage+1; page++ {
 		var batch []struct {
+			SHA    string `json:"sha"`
 			Author *struct {
 				Login string `json:"login"`
 			} `json:"author"`
+			Commit struct {
+				Verification struct {
+					Verified bool `json:"verified"`
+				} `json:"verification"`
+			} `json:"commit"`
 		}
 		p := fmt.Sprintf("/repos/%s/pulls/%d/commits?per_page=%d&page=%d", c.Repo, n, perPage, page)
 		if err := c.do(ctx, http.MethodGet, p, nil, &batch); err != nil {
 			return nil, err
 		}
 		for _, b := range batch {
-			if b.Author == nil {
-				out = append(out, "")
-			} else {
-				out = append(out, b.Author.Login)
+			pc := PRCommit{SHA: b.SHA, Verified: b.Commit.Verification.Verified}
+			if b.Author != nil {
+				pc.Author = b.Author.Login
 			}
+			out = append(out, pc)
 		}
 		if len(batch) < perPage {
 			break

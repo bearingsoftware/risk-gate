@@ -16,6 +16,7 @@ type File struct {
 	Status       string
 	Additions    int
 	Deletions    int
+	Patch        string
 }
 
 // Input is everything the scorer needs. A nil pointer means the signal could not be computed.
@@ -79,6 +80,57 @@ func isControl(p string) bool {
 	return false
 }
 
+// ReleaseDiffOK reports whether the diff alone qualifies for the tier2_path waiver: a release head,
+// the release author, only release.paths, and version-only content in release.version_files.
+func ReleaseDiffOK(cfg *tiers.Config, headRef, author string, files []File, incomplete bool) bool {
+	if incomplete {
+		return false
+	}
+	var changed []string
+	for _, f := range files {
+		changed = append(changed, f.Path)
+		if f.PreviousPath != "" {
+			changed = append(changed, f.PreviousPath)
+		}
+	}
+	if !cfg.ReleaseOnly(headRef, author, changed) {
+		return false
+	}
+	for _, f := range files {
+		if (cfg.IsVersionFile(f.Path) || (f.PreviousPath != "" && cfg.IsVersionFile(f.PreviousPath))) && !versionOnlyPatch(f) {
+			return false
+		}
+	}
+	return true
+}
+
+var versionLine = regexp.MustCompile(`^\s*"version"\s*:\s*"[^"]*"\s*,?\s*$`)
+
+// versionOnlyPatch is false for a missing or truncated patch and for any changed line that is not a version line.
+func versionOnlyPatch(f File) bool {
+	if f.Patch == "" {
+		return false
+	}
+	add, del := 0, 0
+	for _, l := range strings.Split(f.Patch, "\n") {
+		if l == "" || l[0] == ' ' || l[0] == '\\' || strings.HasPrefix(l, "@@") {
+			continue
+		}
+		switch l[0] {
+		case '+':
+			add++
+		case '-':
+			del++
+		default:
+			return false
+		}
+		if !versionLine.MatchString(l[1:]) {
+			return false
+		}
+	}
+	return add == f.Additions && del == f.Deletions
+}
+
 func isManifest(p string) bool { return depManifests[path.Base(p)] }
 
 func isLockfile(p string) bool { return lockfiles[path.Base(p)] }
@@ -128,14 +180,7 @@ func Evaluate(in Input) Result {
 	allTier0OrManifest := len(in.Files) > 0
 	allTier0 := len(in.Files) > 0
 
-	var changed []string
-	for _, f := range in.Files {
-		changed = append(changed, f.Path)
-		if f.PreviousPath != "" {
-			changed = append(changed, f.PreviousPath)
-		}
-	}
-	releaseOnly := in.ReleaseCommitsVerified && !in.FileListIncomplete && cfg.ReleaseOnly(in.HeadRef, in.Author, changed)
+	releaseOnly := in.ReleaseCommitsVerified && ReleaseDiffOK(cfg, in.HeadRef, in.Author, in.Files, in.FileListIncomplete)
 
 	for _, f := range in.Files {
 		tier := cfg.Tier(f.Path)

@@ -29,7 +29,7 @@ const ScorerVersion = "0.1.0"
 type GitHub interface {
 	PullRequest(ctx context.Context, n int) (gh.PullRequest, error)
 	Files(ctx context.Context, n int) ([]gh.File, error)
-	PRCommitAuthors(ctx context.Context, n int) ([]string, error)
+	PRCommits(ctx context.Context, n int) ([]gh.PRCommit, error)
 	AuthorCommits(ctx context.Context, login, branch string, since time.Time, max int) (int, error)
 	RecentMergedPRs(ctx context.Context, branch string, since time.Time, maxPRs, exclude int) (gh.MergedPRs, error)
 	LatestLabelEvent(ctx context.Context, n int, label string) (gh.LabelEvent, bool, error)
@@ -291,25 +291,18 @@ func authorTenure(ctx context.Context, g GitHub, o Options, pr gh.PullRequest, n
 }
 
 // releaseCommitsVerified is true only when every commit on a release-only PR was authored by
-// release.author. Any doubt (fetch error, unlinked author, count mismatch or over the cap) is false.
+// release.author and verified, and the last one is the head the files came from. Any doubt (fetch error, unlinked author, count mismatch or over the cap) is false.
 // It makes no API call unless the cheaper release-only conditions already hold.
 func releaseCommitsVerified(ctx context.Context, g GitHub, n int, pr gh.PullRequest, cfg *tiers.Config, files []score.File) bool {
-	var changed []string
-	for _, f := range files {
-		changed = append(changed, f.Path)
-		if f.PreviousPath != "" {
-			changed = append(changed, f.PreviousPath)
-		}
-	}
-	if pr.ChangedFiles > len(files) || pr.Commits <= 0 || pr.Commits > gh.MaxPRCommits || !cfg.ReleaseOnly(pr.HeadRef, pr.Author, changed) {
+	if pr.Commits <= 0 || pr.Commits > gh.MaxPRCommits || !score.ReleaseDiffOK(cfg, pr.HeadRef, pr.Author, files, pr.ChangedFiles > len(files)) {
 		return false
 	}
-	authors, err := g.PRCommitAuthors(ctx, n)
-	if err != nil || len(authors) != pr.Commits {
+	commits, err := g.PRCommits(ctx, n)
+	if err != nil || len(commits) != pr.Commits || !strings.EqualFold(commits[len(commits)-1].SHA, pr.HeadSHA) {
 		return false
 	}
-	for _, a := range authors {
-		if a == "" || !strings.EqualFold(a, cfg.Release.Author) {
+	for _, c := range commits {
+		if !c.Verified || c.Author == "" || !strings.EqualFold(c.Author, cfg.Release.Author) {
 			return false
 		}
 	}

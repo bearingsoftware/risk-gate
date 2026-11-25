@@ -28,6 +28,30 @@ func Match(pattern, name string) bool {
 	return matchSegs(strings.Split(strings.TrimPrefix(pattern, "/"), "/"), segs)
 }
 
+// MatchRelease matches a release.paths glob against the whole path. Unlike Match, a pattern
+// without a slash names a root-level file, and a directory never satisfies a file pattern.
+func MatchRelease(pattern, name string) bool {
+	return matchExact(strings.Split(strings.TrimPrefix(pattern, "/"), "/"), strings.Split(name, "/"))
+}
+
+func matchExact(p, s []string) bool {
+	if len(p) == 0 {
+		return len(s) == 0
+	}
+	if p[0] == "**" {
+		if len(p) == 1 {
+			return len(s) > 0
+		}
+		for i := 0; i <= len(s); i++ {
+			if matchExact(p[1:], s[i:]) {
+				return true
+			}
+		}
+		return false
+	}
+	return len(s) > 0 && segMatch(p[0], s[0]) && matchExact(p[1:], s[1:])
+}
+
 func matchSegs(p, s []string) bool {
 	if len(p) == 0 {
 		return true

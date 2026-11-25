@@ -9,24 +9,24 @@ import (
 )
 
 type Fake struct {
-	PR               gh.PullRequest
-	FileList         []gh.File
-	CommitsSince     map[bool]int // keyed by "since is set"
-	Merged           gh.MergedPRs
-	LabelEv          *gh.LabelEvent
-	CommitDate       time.Time
-	ForcePush        *time.Time
-	CommitsErr       error
-	RemoveErr        error
-	CheckErr         error
-	CheckRunsErr     error
-	PRErr            error
-	FilesErr         error
-	CommitAuthors    []string
-	CommitAuthorsErr error
-	DiffText         string
-	DiffErr          error
-	Existing         []gh.CheckRunInfo
+	PR           gh.PullRequest
+	FileList     []gh.File
+	CommitsSince map[bool]int // keyed by "since is set"
+	Merged       gh.MergedPRs
+	LabelEv      *gh.LabelEvent
+	CommitDate   time.Time
+	ForcePush    *time.Time
+	CommitsErr   error
+	RemoveErr    error
+	CheckErr     error
+	CheckRunsErr error
+	PRErr        error
+	FilesErr     error
+	PRCommitList []gh.PRCommit
+	PRCommitsErr error
+	DiffText     string
+	DiffErr      error
+	Existing     []gh.CheckRunInfo
 
 	Removed []string
 	Added   []string
@@ -36,8 +36,8 @@ type Fake struct {
 func (f *Fake) PullRequest(context.Context, int) (gh.PullRequest, error) { return f.PR, f.PRErr }
 func (f *Fake) Files(context.Context, int) ([]gh.File, error)            { return f.FileList, f.FilesErr }
 
-func (f *Fake) PRCommitAuthors(context.Context, int) ([]string, error) {
-	return f.CommitAuthors, f.CommitAuthorsErr
+func (f *Fake) PRCommits(context.Context, int) ([]gh.PRCommit, error) {
+	return f.PRCommitList, f.PRCommitsErr
 }
 
 func (f *Fake) AuthorCommits(_ context.Context, _, _ string, since time.Time, max int) (int, error) {

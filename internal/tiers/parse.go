@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -36,6 +37,8 @@ type Release struct {
 	Heads  []string `yaml:"heads"`
 	Author string   `yaml:"author"`
 	Paths  []string `yaml:"paths"`
+	// VersionFiles are release paths whose diff must be version lines only.
+	VersionFiles []string `yaml:"version_files"`
 }
 
 type AttestationConfig struct {
@@ -72,7 +75,7 @@ func Parse(data []byte) (*Config, error) {
 			return nil, fmt.Errorf("tiers file: release.heads: invalid pattern %q", h)
 		}
 	}
-	for _, p := range c.Release.Paths {
+	for _, p := range append(slices.Clone(c.Release.Paths), c.Release.VersionFiles...) {
 		if p == "" || strings.HasPrefix(p, "!") || !validGlob(p) {
 			return nil, fmt.Errorf("tiers file: release.paths: invalid glob %q", p)
 		}
@@ -139,7 +142,7 @@ func (c *Config) ReleaseOnly(headRef, author string, files []string) bool {
 	for _, f := range files {
 		ok := false
 		for _, g := range r.Paths {
-			if Match(g, f) {
+			if MatchRelease(g, f) {
 				ok = true
 				break
 			}
@@ -149,6 +152,16 @@ func (c *Config) ReleaseOnly(headRef, author string, files []string) bool {
 		}
 	}
 	return true
+}
+
+// IsVersionFile reports whether a release path must change version lines only.
+func (c *Config) IsVersionFile(p string) bool {
+	for _, g := range c.Release.VersionFiles {
+		if MatchRelease(g, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // MissingFromCodeowners returns the tier 2 globs that no CODEOWNERS line lists as its pattern.
