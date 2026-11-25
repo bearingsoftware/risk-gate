@@ -16,6 +16,7 @@ type File struct {
 	Status       string
 	Additions    int
 	Deletions    int
+	Patch        string
 }
 
 // Input is everything the scorer needs. A nil pointer means the signal could not be computed.
@@ -29,6 +30,8 @@ type Input struct {
 	Files     []File
 	// FileListIncomplete is set when GitHub reported more changed files than it returned.
 	FileListIncomplete bool
+	// ReleaseCommitsVerified is set by the caller once every PR commit is authored by release.author.
+	ReleaseCommitsVerified bool
 
 	SastNewHigh          *int
 	CoverageDelta        *float64
@@ -77,10 +80,100 @@ func isControl(p string) bool {
 	return false
 }
 
+// ReleaseDiffOK reports whether the diff alone qualifies for the tier2_path waiver: a release head,
+// the release author, only release.paths, and version-only content in release.version_files.
+func ReleaseDiffOK(cfg *tiers.Config, headRef, author string, files []File, incomplete bool) bool {
+	if incomplete {
+		return false
+	}
+	var changed []string
+	for _, f := range files {
+		changed = append(changed, f.Path)
+		if f.PreviousPath != "" {
+			changed = append(changed, f.PreviousPath)
+		}
+	}
+	if !cfg.ReleaseOnly(headRef, author, changed) {
+		return false
+	}
+	var oldV, newV string
+	manifestPatch := ""
+	for _, f := range files {
+		if f.Path == ".release-please-manifest.json" {
+			manifestPatch = f.Patch
+		}
+		isVer := false
+		for _, p := range []string{f.Path, f.PreviousPath} {
+			if p == "" {
+				continue
+			}
+			// A manifest is never waived on release.paths alone, however broad the glob.
+			if tiers.IsCodeManifest(p) && !cfg.IsVersionFile(p) {
+				return false
+			}
+			isVer = isVer || cfg.IsVersionFile(p)
+		}
+		if !isVer {
+			continue
+		}
+		o, n, pairs, ok := versionPairs(f)
+		maxPairs := 2
+		if path.Base(f.Path) == "package.json" {
+			maxPairs = 1
+		}
+		if !ok || pairs > maxPairs || o == n || (oldV != "" && (o != oldV || n != newV)) {
+			return false
+		}
+		oldV, newV = o, n
+	}
+	if newV != "" && manifestPatch != "" {
+		found := false
+		for _, l := range strings.Split(manifestPatch, "\n") {
+			if strings.HasPrefix(l, "+") && strings.Contains(l, `"`+newV+`"`) {
+				found = true
+			}
+		}
+		return found
+	}
+	return true
+}
+
+var versionLine = regexp.MustCompile(`^\s*"version"\s*:\s*"(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)"\s*,?\s*$`)
+
+// versionPairs reads a version_file patch as adjacent "-version / +version" pairs of one bump.
+// ok is false for a missing or truncated patch, a lone or non-version changed line, or mixed bumps.
+func versionPairs(f File) (oldV, newV string, pairs int, ok bool) {
+	if f.Patch == "" {
+		return "", "", 0, false
+	}
+	lines := strings.Split(f.Patch, "\n")
+	add, del := 0, 0
+	for i := 0; i < len(lines); i++ {
+		l := lines[i]
+		if l == "" || l[0] == ' ' || l[0] == '\\' || strings.HasPrefix(l, "@@") {
+			continue
+		}
+		if l[0] != '-' || i+1 >= len(lines) || lines[i+1] == "" || lines[i+1][0] != '+' {
+			return "", "", 0, false
+		}
+		m1, m2 := versionLine.FindStringSubmatch(l[1:]), versionLine.FindStringSubmatch(lines[i+1][1:])
+		if m1 == nil || m2 == nil || (pairs > 0 && (m1[1] != oldV || m2[1] != newV)) {
+			return "", "", 0, false
+		}
+		oldV, newV = m1[1], m2[1]
+		pairs++
+		add++
+		del++
+		i++
+	}
+	return oldV, newV, pairs, pairs > 0 && add == f.Additions && del == f.Deletions
+}
+
 func isManifest(p string) bool { return depManifests[path.Base(p)] }
 
 func isLockfile(p string) bool { return lockfiles[path.Base(p)] }
 
+// isCodeManifest and tiers.codeManifests are two lists of manifest names; keep them in step.
 func isCodeManifest(p string) bool { return isManifest(p) && !isLockfile(p) }
 
 func isTest(p string) bool {
@@ -122,14 +215,23 @@ func Evaluate(in Input) Result {
 		Files:  make([]decision.File, 0, len(in.Files)),
 	}
 	dirs := map[string]bool{}
-	var tier2Path, control, manifest, floorManifest string
+	var tier2Path, control, manifest, floorManifest, waived string
 	allTier0OrManifest := len(in.Files) > 0
 	allTier0 := len(in.Files) > 0
+
+	releaseOnly := in.ReleaseCommitsVerified && ReleaseDiffOK(cfg, in.HeadRef, in.Author, in.Files, in.FileListIncomplete)
 
 	for _, f := range in.Files {
 		tier := cfg.Tier(f.Path)
 		if f.PreviousPath != "" {
 			tier = max(tier, cfg.Tier(f.PreviousPath))
+		}
+		if releaseOnly && tier == 2 && !isControl(f.Path) && (f.PreviousPath == "" || !isControl(f.PreviousPath)) {
+			tier = cfg.DefaultTier
+			if waived != "" {
+				waived += ", "
+			}
+			waived += f.Path
 		}
 		if in.AuthorBot && cfg.IsBotAuthor(in.Author) && isManifest(f.Path) && tier != 2 {
 			tier = 0
@@ -207,6 +309,9 @@ func Evaluate(in Input) Result {
 
 	if tier2Path != "" {
 		floor("tier2_path", 2, tier2Path)
+	}
+	if waived != "" {
+		floor("tier2_path_waived", 0, "release-only diff by "+in.Author+": "+waived)
 	}
 	if control != "" {
 		floor("control_file", 2, control)

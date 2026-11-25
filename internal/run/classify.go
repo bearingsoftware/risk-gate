@@ -200,7 +200,7 @@ func classifyInput(ctx context.Context, g ClassifyGitHub, o ClassifyOptions, pr 
 	}
 	in := classify.Input{Title: pr.Title, Body: pr.Body, Diff: diff, TierFile: tiersData, Decision: slimDecision(detData)}
 	for _, f := range files {
-		in.Files = append(in.Files, classify.File(f))
+		in.Files = append(in.Files, classify.File{Path: f.Path, PreviousPath: f.PreviousPath, Status: f.Status, Additions: f.Additions, Deletions: f.Deletions})
 	}
 	return in, nil
 }

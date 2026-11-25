@@ -35,6 +35,7 @@ type PullRequest struct {
 	HeadRef      string
 	HeadSHA      string
 	ChangedFiles int
+	Commits      int
 	Fork         bool
 }
 
@@ -44,6 +45,7 @@ type File struct {
 	Status       string
 	Additions    int
 	Deletions    int
+	Patch        string
 }
 
 type LabelEvent struct {
@@ -231,6 +233,7 @@ func (c *Client) PullRequest(ctx context.Context, n int) (PullRequest, error) {
 			} `json:"repo"`
 		} `json:"head"`
 		ChangedFiles int `json:"changed_files"`
+		Commits      int `json:"commits"`
 	}
 	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/pulls/%d", c.Repo, n), nil, &raw); err != nil {
 		return PullRequest{}, err
@@ -239,7 +242,7 @@ func (c *Client) PullRequest(ctx context.Context, n int) (PullRequest, error) {
 		Number: raw.Number, Title: raw.Title, Body: raw.Body,
 		Author: raw.User.Login, AuthorBot: raw.User.Type == "Bot" || strings.HasSuffix(raw.User.Login, "[bot]"),
 		BaseRef: raw.Base.Ref, BaseSHA: raw.Base.SHA, HeadRef: raw.Head.Ref, HeadSHA: raw.Head.SHA,
-		ChangedFiles: raw.ChangedFiles, Labels: []string{},
+		ChangedFiles: raw.ChangedFiles, Commits: raw.Commits, Labels: []string{},
 		Fork: raw.Head.Repo == nil || raw.Base.Repo == nil || raw.Head.Repo.FullName != raw.Base.Repo.FullName,
 	}
 	for _, l := range raw.Labels {
@@ -254,6 +257,7 @@ type rawFile struct {
 	Status           string `json:"status"`
 	Additions        int    `json:"additions"`
 	Deletions        int    `json:"deletions"`
+	Patch            string `json:"patch"`
 }
 
 func (c *Client) prFiles(ctx context.Context, n int) ([]rawFile, error) {
@@ -280,7 +284,7 @@ func (c *Client) Files(ctx context.Context, n int) ([]File, error) {
 	}
 	out := make([]File, len(raw))
 	for i, f := range raw {
-		out[i] = File{Path: f.Filename, PreviousPath: f.PreviousFilename, Status: f.Status, Additions: f.Additions, Deletions: f.Deletions}
+		out[i] = File{Path: f.Filename, PreviousPath: f.PreviousFilename, Status: f.Status, Additions: f.Additions, Deletions: f.Deletions, Patch: f.Patch}
 	}
 	return out, nil
 }
@@ -306,6 +310,57 @@ func (c *Client) AuthorCommits(ctx context.Context, login, branch string, since 
 		}
 	}
 	return min(n, max), nil
+}
+
+// MaxPRCommits is the most commits the pulls/{n}/commits endpoint will list.
+const MaxPRCommits = 250
+
+// PRCommit is one commit on a PR. Author is "" when the commit has no linked GitHub account.
+type PRCommit struct {
+	SHA    string
+	Author string
+	// Committer is the committer login; GitHub verifies a signature against the committer, not the author.
+	Committer string
+	Verified  bool
+}
+
+// PRCommits lists the PR's commits oldest first, as the endpoint returns them.
+func (c *Client) PRCommits(ctx context.Context, n int) ([]PRCommit, error) {
+	var out []PRCommit
+	for page := 1; page <= MaxPRCommits/perPage+1; page++ {
+		var batch []struct {
+			SHA    string `json:"sha"`
+			Author *struct {
+				Login string `json:"login"`
+			} `json:"author"`
+			Committer *struct {
+				Login string `json:"login"`
+			} `json:"committer"`
+			Commit struct {
+				Verification struct {
+					Verified bool `json:"verified"`
+				} `json:"verification"`
+			} `json:"commit"`
+		}
+		p := fmt.Sprintf("/repos/%s/pulls/%d/commits?per_page=%d&page=%d", c.Repo, n, perPage, page)
+		if err := c.do(ctx, http.MethodGet, p, nil, &batch); err != nil {
+			return nil, err
+		}
+		for _, b := range batch {
+			pc := PRCommit{SHA: b.SHA, Verified: b.Commit.Verification.Verified}
+			if b.Author != nil {
+				pc.Author = b.Author.Login
+			}
+			if b.Committer != nil {
+				pc.Committer = b.Committer.Login
+			}
+			out = append(out, pc)
+		}
+		if len(batch) < perPage {
+			break
+		}
+	}
+	return out, nil
 }
 
 // RecentMergedPRs returns the file lists of PRs merged into branch since the given time,

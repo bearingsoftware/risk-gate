@@ -29,6 +29,7 @@ const ScorerVersion = "0.1.0"
 type GitHub interface {
 	PullRequest(ctx context.Context, n int) (gh.PullRequest, error)
 	Files(ctx context.Context, n int) ([]gh.File, error)
+	PRCommits(ctx context.Context, n int) ([]gh.PRCommit, error)
 	AuthorCommits(ctx context.Context, login, branch string, since time.Time, max int) (int, error)
 	RecentMergedPRs(ctx context.Context, branch string, since time.Time, maxPRs, exclude int) (gh.MergedPRs, error)
 	LatestLabelEvent(ctx context.Context, n int, label string) (gh.LabelEvent, bool, error)
@@ -116,6 +117,7 @@ func Run(ctx context.Context, o Options, g GitHub) (decision.Record, error) {
 	for _, f := range files {
 		in.Files = append(in.Files, score.File(f))
 	}
+	in.ReleaseCommitsVerified = releaseCommitsVerified(ctx, g, o.PR, pr, cfg, in.Files)
 	if err := optionalSignals(o, &in); err != nil {
 		return decision.Record{}, err
 	}
@@ -286,6 +288,25 @@ func authorTenure(ctx context.Context, g GitHub, o Options, pr gh.PullRequest, n
 	}
 	in.AuthorCommits180d = &n
 	in.FirstTimeContributor = &first
+}
+
+// releaseCommitsVerified is true only when every commit on a release-only PR was authored by
+// release.author and verified, and the last one is the head the files came from. Any doubt (fetch error, unlinked author, count mismatch or over the cap) is false.
+// It makes no API call unless the cheaper release-only conditions already hold.
+func releaseCommitsVerified(ctx context.Context, g GitHub, n int, pr gh.PullRequest, cfg *tiers.Config, files []score.File) bool {
+	if pr.Commits <= 0 || pr.Commits > gh.MaxPRCommits || !score.ReleaseDiffOK(cfg, pr.HeadRef, pr.Author, files, pr.ChangedFiles > len(files)) {
+		return false
+	}
+	commits, err := g.PRCommits(ctx, n)
+	if err != nil || len(commits) != pr.Commits || !strings.EqualFold(commits[len(commits)-1].SHA, pr.HeadSHA) {
+		return false
+	}
+	for _, c := range commits {
+		if !c.Verified || c.Author == "" || !strings.EqualFold(c.Author, cfg.Release.Author) || !(strings.EqualFold(c.Committer, "web-flow") || strings.EqualFold(c.Committer, cfg.Release.Author)) {
+			return false
+		}
+	}
+	return true
 }
 
 func hotFiles(ctx context.Context, g GitHub, o Options, pr gh.PullRequest, now time.Time, w *score.Weights, in *score.Input) {

@@ -25,6 +25,9 @@ tiers:
       require_provenance: false  # no provenance check exists here; recorded, not verified
 release:
   heads: ["develop", "release-please--*"]   # head refs whose PRs are lane=release
+  author: "bearingsoftware-release[bot]"   # optional; with paths, waives tier2_path for release-only diffs
+  paths: [".release-please-manifest.json", "CHANGELOG.md", "package.json", "package-lock.json"]
+  version_files: ["package.json", "package-lock.json"]   # release paths whose diff may change "version" lines only
 attestation:                     # only read in mode=enforce
   label: tier2-self-reviewed
   permitted: ["chattersley"]
@@ -55,6 +58,34 @@ Rules:
 - `.github/review-tiers.yml`, `.github/CODEOWNERS` and `.github/workflows/**` must be tier 2;
   risk-gate adds them as `control_file` floors even if the file forgets them.
 - CODEOWNERS must list every tier 2 glob. `risk-gate lint-tiers` fails when they differ.
+
+`release.author` / `release.paths` rules:
+
+- The `tier2_path` floor is waived only when the head ref matches `release.heads`, the PR author login equals
+  `release.author` (exact, case-insensitive; a branch name alone is pushable by anyone), and every changed
+  file, plus the old path of every rename, matches `release.paths`. Either key empty or absent turns this off.
+- `release.paths` and `release.version_files` match the whole path, anchored: a pattern without a slash is a
+  root-level file of that exact name (`package.json` does not match `schema/package.json`), `**/X` matches `X`
+  at any depth, and a directory never satisfies a file pattern. This differs from the tier globs.
+- Every commit on the PR must have a GitHub author login equal to `release.author` **and** a verified
+  signature (`commit.verification.verified`; the author login follows a settable email, so alone it proves
+  nothing), and the last commit must be the PR head the files were read at. A fetch error, an unlinked
+  author, an unverified commit, a commit count that differs from the PR's, or more than 250 commits means no
+  waiver. The fetch happens only when the other conditions hold. `cmd/replay` supplies no commit data, so it never waives.
+- A changed file matching `release.version_files` needs its patch present and complete, and every added or
+  removed line must be `"version": "..."`. Any other line, or a missing or truncated patch, means no waiver.
+  The value must be semver (`1.2.3`, optionally with a pre-release or build suffix); `curl x|sh` or a git URL is rejected.
+  A `release.paths` entry naming a dependency manifest (`package.json`, `package-lock.json`, `go.mod`, `Cargo.toml` and similar)
+  must also be listed verbatim in `release.version_files`, or the file fails to parse. Without this a bot-authored `package.json` could carry a new script or dependency (`dep_manifest_human` exempts bots).
+- `release.author` is the app's REST login, for example `bearingsoftware-release[bot]`, not the `app/...` form the `gh` CLI prints.
+- Each commit's committer must be `web-flow` or `release.author`: GitHub verifies the signature against the committer, so a
+  human signing with their own key under a forged bot author email would otherwise pass. A missing committer means no waiver.
+- Residual risk: someone with write access who creates a commit through the GitHub API with a custom author set to the bot
+  may still get a web-flow signature and pass these checks. This gate is a review-routing control, not separation of
+  duties; every such commit is in the audit log.
+- Only `tier2_path` is waived. `control_file`, `dep_manifest_human` and every other floor apply as before.
+- Waived files count at `default_tier` in `path_tier`. The decision carries a tier 0 floor
+  `tier2_path_waived` whose detail reads `release-only diff by <author>: <waived paths>`.
 
 `evidence` rules (each violation is fatal, like the other blocks):
 

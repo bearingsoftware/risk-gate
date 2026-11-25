@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -32,8 +33,19 @@ type BotConditions struct {
 	RequireProvenance bool   `yaml:"require_provenance"`
 }
 
+// codeManifests are file names (keep in step with score.isCodeManifest and score.depManifests) whose content can add dependencies or run code, so a release path
+// naming one must be restricted to version-only diffs.
+var codeManifests = map[string]bool{
+	"package.json": true, "package-lock.json": true, "pnpm-lock.yaml": true, "yarn.lock": true,
+	"go.mod": true, "go.sum": true, "Cargo.toml": true, "Cargo.lock": true, "pyproject.toml": true, "requirements.txt": true,
+}
+
 type Release struct {
-	Heads []string `yaml:"heads"`
+	Heads  []string `yaml:"heads"`
+	Author string   `yaml:"author"`
+	Paths  []string `yaml:"paths"`
+	// VersionFiles are release paths whose diff must be version lines only.
+	VersionFiles []string `yaml:"version_files"`
 }
 
 type AttestationConfig struct {
@@ -69,6 +81,19 @@ func Parse(data []byte) (*Config, error) {
 		if _, err := path.Match(h, ""); err != nil {
 			return nil, fmt.Errorf("tiers file: release.heads: invalid pattern %q", h)
 		}
+	}
+	for _, p := range append(slices.Clone(c.Release.Paths), c.Release.VersionFiles...) {
+		if p == "" || strings.HasPrefix(p, "!") || !validGlob(p) {
+			return nil, fmt.Errorf("tiers file: release.paths: invalid glob %q", p)
+		}
+	}
+	for _, p := range c.Release.Paths {
+		if codeManifests[path.Base(p)] && !slices.Contains(c.Release.VersionFiles, p) {
+			return nil, fmt.Errorf("tiers file: release.paths %q is a dependency manifest and must also be in release.version_files", p)
+		}
+	}
+	if a := c.Release.Author; a != strings.TrimSpace(a) || strings.ContainsAny(a, " \t\n") {
+		return nil, fmt.Errorf("tiers file: release.author: invalid login %q", a)
 	}
 	if a := c.Attestation; a != nil && a.Label == "" {
 		return nil, fmt.Errorf("tiers file: attestation.label is required")
@@ -113,6 +138,41 @@ func (c *Config) IsBotAuthor(login string) bool {
 func (c *Config) IsReleaseHead(ref string) bool {
 	for _, h := range c.Release.Heads {
 		if ok, _ := path.Match(h, ref); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// ReleaseOnly reports whether a release-head PR by release.author changes only release.paths,
+// the one case where the tier2_path floor is waived. Either setting empty turns it off.
+func (c *Config) ReleaseOnly(headRef, author string, files []string) bool {
+	r := c.Release
+	if r.Author == "" || len(r.Paths) == 0 || len(files) == 0 || !strings.EqualFold(r.Author, author) || !c.IsReleaseHead(headRef) {
+		return false
+	}
+	for _, f := range files {
+		ok := false
+		for _, g := range r.Paths {
+			if MatchRelease(g, f) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// IsCodeManifest reports whether the last segment of p names a dependency manifest.
+func IsCodeManifest(p string) bool { return codeManifests[path.Base(p)] }
+
+// IsVersionFile reports whether a release path must change version lines only.
+func (c *Config) IsVersionFile(p string) bool {
+	for _, g := range c.Release.VersionFiles {
+		if MatchRelease(g, p) {
 			return true
 		}
 	}

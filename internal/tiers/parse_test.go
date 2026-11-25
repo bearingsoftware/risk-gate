@@ -103,3 +103,50 @@ func TestMissingFromCodeowners(t *testing.T) {
 		t.Fatalf("missing = %v", got)
 	}
 }
+
+func TestParseReleaseAuthorAndPaths(t *testing.T) {
+	t.Parallel()
+	const head = "version: 1\nowner: x\ndefault_tier: 1\nrelease:\n"
+	for _, tc := range []struct{ name, body string }{
+		{"bad glob", "  author: a[bot]\n  paths: [\"[\"]\n"},
+		{"negated", "  author: a[bot]\n  paths: [\"!x\"]\n"},
+		{"empty path", "  author: a[bot]\n  paths: [\"\"]\n"},
+		{"manifest not in version_files", "  author: a[bot]\n  paths: [package.json]\n"},
+		{"nested manifest not in version_files", "  author: a[bot]\n  paths: [\"**/go.mod\"]\n  version_files: [go.mod]\n"},
+		{"space in author", "  author: \"a b\"\n  paths: [x]\n"},
+	} {
+		if _, err := Parse([]byte(head + tc.body)); err == nil {
+			t.Errorf("%s: want error", tc.name)
+		}
+	}
+	if _, err := Parse([]byte(head + "  author: a[bot]\n  paths: [package.json]\n  version_files: [package.json]\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Parse([]byte(head + "  author: a[bot]\n  paths: [CHANGELOG.md]\n")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMatchRelease(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		pat, name string
+		want      bool
+	}{
+		{"package.json", "package.json", true},
+		{"package.json", "weights/package.json/x.yaml", false},
+		{"package.json", "schema/package.json", false},
+		{"package.json", "a/package.json", false},
+		{"**/CHANGELOG.md", "CHANGELOG.md", true},
+		{"**/CHANGELOG.md", "a/b/CHANGELOG.md", true},
+		{"**/CHANGELOG.md", "a/CHANGELOG.md/evil.go", false},
+		{"a/CHANGELOG.md", "a/CHANGELOG.md/evil.go", false},
+		{"docs/**", "docs/x/y.md", true},
+		{"docs/**", "docs", false},
+	}
+	for _, tc := range tests {
+		if got := MatchRelease(tc.pat, tc.name); got != tc.want {
+			t.Errorf("MatchRelease(%q, %q) = %v, want %v", tc.pat, tc.name, got, tc.want)
+		}
+	}
+}
