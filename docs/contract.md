@@ -48,6 +48,7 @@ One record per scoring run. A PR has many (every push, label, review event).
   modes. `check.would_block` = `required && !attested`, in both modes. Recorded-only repos therefore never
   show `would_block`.
 - If GitHub's `changed_files` exceeds the files it returned (3000 cap), floor 2 `file_list_incomplete`.
+- `tier2_path_waived` (floor tier 0, informational) records a release-lane waiver of `tier2_path`; it never raises a tier.
 - `attestation.attested` is self-attestation by the single maintainer. Report it as attested,
   never as an independent review.
 - Unknown extra fields: ignore. Missing required fields or another `schema` value: reject and log.

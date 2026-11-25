@@ -63,9 +63,12 @@ Rules:
 - The `tier2_path` floor is waived only when the head ref matches `release.heads`, the PR author login equals
   `release.author` (exact, case-insensitive; a branch name alone is pushable by anyone), and every changed
   file, plus the old path of every rename, matches `release.paths`. Either key empty or absent turns this off.
+- Every commit on the PR must also have a GitHub author login equal to `release.author` (fetched only
+  when the other conditions hold). A fetch error, an unlinked commit author, a commit count that differs
+  from the PR's, or more than 250 commits means no waiver. `cmd/replay` supplies no commit data, so it never waives.
 - Only `tier2_path` is waived. `control_file`, `dep_manifest_human` and every other floor apply as before.
-- Waived files count at `default_tier` in `path_tier`; the decision records no separate waiver marker
-  (schema/decision.v1.json is unchanged, pending sign-off).
+- Waived files count at `default_tier` in `path_tier`. The decision carries a tier 0 floor
+  `tier2_path_waived` whose detail reads `release-only diff by <author>: <waived paths>`.
 
 `evidence` rules (each violation is fatal, like the other blocks):
 
