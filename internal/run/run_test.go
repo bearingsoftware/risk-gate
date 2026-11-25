@@ -3,10 +3,12 @@ package run_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -515,6 +517,54 @@ func TestPublishForbidden(t *testing.T) {
 			}
 			if !tc.wantErr && (rec.DetTier != 2 || !strings.Contains(logs.String(), "::warning::")) {
 				t.Fatalf("tier %d logs %q", rec.DetTier, logs.String())
+			}
+		})
+	}
+}
+
+func TestReleaseWaiverChecksEveryCommit(t *testing.T) {
+	t.Parallel()
+	const bot = "release-please[bot]"
+	doc := strings.Replace(tiersDoc, `paths: ["auth/**"]`, `paths: ["auth/**", "package.json"]`, 1) + `release:
+  heads: ["release-please--*"]
+  author: "` + bot + `"
+  paths: ["package.json"]
+`
+	tests := []struct {
+		name    string
+		authors []string
+		err     error
+		commits int
+		want    int
+	}{
+		{"all by release author", []string{bot, "Release-Please[bot]"}, nil, 2, 1},
+		{"one human commit", []string{bot, "mallory"}, nil, 2, 2},
+		{"null author", []string{bot, ""}, nil, 2, 2},
+		{"fetch error", nil, errors.New("boom"), 2, 2},
+		{"count mismatch", []string{bot}, nil, 2, 2},
+		{"over the endpoint cap", []string{bot}, nil, 251, 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			o := opts(t, "shadow", "opened")
+			if err := os.WriteFile(o.TiersPath, []byte(doc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			f := fake(nil, "package.json")
+			f.PR.Author, f.PR.AuthorBot, f.PR.HeadRef, f.PR.Commits = bot, true, "release-please--branches--main", tc.commits
+			f.PR.ChangedFiles = 1
+			f.CommitAuthors, f.CommitAuthorsErr = tc.authors, tc.err
+			rec, err := run.Run(context.Background(), o, f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var rules []string
+			for _, fl := range rec.Floors {
+				rules = append(rules, fl.Rule)
+			}
+			if rec.DetTier != tc.want || slices.Contains(rules, "tier2_path") != (tc.want == 2) || slices.Contains(rules, "tier2_path_waived") != (tc.want == 1) {
+				t.Fatalf("det %d floors %+v, want tier %d", rec.DetTier, rec.Floors, tc.want)
 			}
 		})
 	}

@@ -609,13 +609,30 @@ func TestReleaseOnlyWaivesTier2PathFloor(t *testing.T) {
 			in := base(t)
 			in.Tiers = mustTiers(t, tc.cfg)
 			in.Author, in.AuthorBot, in.HeadRef, in.Files = tc.author, tc.bot, tc.head, tc.files
+			in.ReleaseCommitsVerified = true
 			r := Evaluate(in)
 			if r.DetTier != tc.wantTier || slices.Contains(floorRules(r), "tier2_path") != tc.wantFloor {
 				t.Fatalf("det = %d floors = %v, want tier %d tier2_path=%v", r.DetTier, floorRules(r), tc.wantTier, tc.wantFloor)
+			}
+			if slices.Contains(floorRules(r), "tier2_path_waived") == tc.wantFloor {
+				t.Fatalf("waiver marker missing or spurious: %v", floorRules(r))
 			}
 			if tc.head != "feat/x" && r.Lane != "release" {
 				t.Fatalf("lane = %s", r.Lane)
 			}
 		})
+	}
+}
+
+func TestReleaseOnlyNeedsVerifiedCommits(t *testing.T) {
+	t.Parallel()
+	in := base(t)
+	in.Tiers = mustTiers(t, strings.Replace(strings.Replace(tiersYAML, `"infra/**"]`, `"infra/**", ".release-please-manifest.json"]`, 1), `release-please--*"]`, `release-please--*"]
+  author: "release-please[bot]"
+  paths: [".release-please-manifest.json"]`, 1))
+	in.Author, in.AuthorBot, in.HeadRef = "release-please[bot]", true, "release-please--branches--main"
+	in.Files = []File{{Path: ".release-please-manifest.json", Status: "modified", Additions: 1}}
+	if r := Evaluate(in); r.DetTier != 2 {
+		t.Fatalf("unverified commits waived: %d", r.DetTier)
 	}
 }
