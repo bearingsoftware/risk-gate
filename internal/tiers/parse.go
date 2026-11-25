@@ -33,6 +33,13 @@ type BotConditions struct {
 	RequireProvenance bool   `yaml:"require_provenance"`
 }
 
+// codeManifests are file names whose content can add dependencies or run code, so a release path
+// naming one must be restricted to version-only diffs.
+var codeManifests = map[string]bool{
+	"package.json": true, "package-lock.json": true, "pnpm-lock.yaml": true, "yarn.lock": true,
+	"go.mod": true, "go.sum": true, "Cargo.toml": true, "Cargo.lock": true, "pyproject.toml": true, "requirements.txt": true,
+}
+
 type Release struct {
 	Heads  []string `yaml:"heads"`
 	Author string   `yaml:"author"`
@@ -78,6 +85,11 @@ func Parse(data []byte) (*Config, error) {
 	for _, p := range append(slices.Clone(c.Release.Paths), c.Release.VersionFiles...) {
 		if p == "" || strings.HasPrefix(p, "!") || !validGlob(p) {
 			return nil, fmt.Errorf("tiers file: release.paths: invalid glob %q", p)
+		}
+	}
+	for _, p := range c.Release.Paths {
+		if codeManifests[path.Base(p)] && !slices.Contains(c.Release.VersionFiles, p) {
+			return nil, fmt.Errorf("tiers file: release.paths %q is a dependency manifest and must also be in release.version_files", p)
 		}
 	}
 	if a := c.Release.Author; a != strings.TrimSpace(a) || strings.ContainsAny(a, " \t\n") {

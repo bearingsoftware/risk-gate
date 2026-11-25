@@ -302,7 +302,7 @@ func releaseCommitsVerified(ctx context.Context, g GitHub, n int, pr gh.PullRequ
 		return false
 	}
 	for _, c := range commits {
-		if !c.Verified || c.Author == "" || !strings.EqualFold(c.Author, cfg.Release.Author) {
+		if !c.Verified || c.Author == "" || !strings.EqualFold(c.Author, cfg.Release.Author) || !(strings.EqualFold(c.Committer, "web-flow") || strings.EqualFold(c.Committer, cfg.Release.Author)) {
 			return false
 		}
 	}

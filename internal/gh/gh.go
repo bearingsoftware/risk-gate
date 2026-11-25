@@ -317,9 +317,11 @@ const MaxPRCommits = 250
 
 // PRCommit is one commit on a PR. Author is "" when the commit has no linked GitHub account.
 type PRCommit struct {
-	SHA      string
-	Author   string
-	Verified bool
+	SHA    string
+	Author string
+	// Committer is the committer login; GitHub verifies a signature against the committer, not the author.
+	Committer string
+	Verified  bool
 }
 
 // PRCommits lists the PR's commits oldest first, as the endpoint returns them.
@@ -331,6 +333,9 @@ func (c *Client) PRCommits(ctx context.Context, n int) ([]PRCommit, error) {
 			Author *struct {
 				Login string `json:"login"`
 			} `json:"author"`
+			Committer *struct {
+				Login string `json:"login"`
+			} `json:"committer"`
 			Commit struct {
 				Verification struct {
 					Verified bool `json:"verified"`
@@ -345,6 +350,9 @@ func (c *Client) PRCommits(ctx context.Context, n int) ([]PRCommit, error) {
 			pc := PRCommit{SHA: b.SHA, Verified: b.Commit.Verification.Verified}
 			if b.Author != nil {
 				pc.Author = b.Author.Login
+			}
+			if b.Committer != nil {
+				pc.Committer = b.Committer.Login
 			}
 			out = append(out, pc)
 		}

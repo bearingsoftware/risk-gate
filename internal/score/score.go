@@ -104,7 +104,7 @@ func ReleaseDiffOK(cfg *tiers.Config, headRef, author string, files []File, inco
 	return true
 }
 
-var versionLine = regexp.MustCompile(`^\s*"version"\s*:\s*"[^"]*"\s*,?\s*$`)
+var versionLine = regexp.MustCompile(`^\s*"version"\s*:\s*"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?"\s*,?\s*$`)
 
 // versionOnlyPatch is false for a missing or truncated patch and for any changed line that is not a version line.
 func versionOnlyPatch(f File) bool {
